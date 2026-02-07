@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PT. ALUSINDO MITRA PROPERTI</title>
+    <title>Sistem Absen PT Alusindo</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- React & Babel -->
@@ -37,7 +37,9 @@
 
         // --- KONFIGURASI ---
         const APP_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby11VQEFB1UeEJk9yXT6MhsHnz_aHg4aVkB_3cUlNOVWWReBru5vIxx4WaSINTCKm6p/exec'; 
-        const LOGO_URL = 'https://lh3.googleusercontent.com/d/1A9rh7e8Qx6K73-7tRMUOtFul-jXaYUxs'; // GANTI DENGAN URL LOGO ANDA (Format PNG/JPG)
+        
+        // LINK LOGO GOOGLE DRIVE ANDA SUDAH SAYA PASANG DI SINI
+        const LOGO_URL = 'https://lh3.googleusercontent.com/d/1A9rh7e8Qx6K73-7tRMUOtFul-jXaYUxs'; 
 
         function App() {
             const [user, setUser] = useState(null);
@@ -183,27 +185,37 @@
                     <div className="min-h-screen flex items-center justify-center p-4 bg-slate-900">
                         <div className="max-w-md w-full bg-white rounded-[2.5rem] shadow-2xl p-10 animate-in">
                             <div className="text-center mb-8">
-                                {/* Logo Perusahaan */}
+                                {/* Container Logo */}
                                 <div className="mb-6 flex justify-center">
-                                    <div className="w-24 h-24 bg-blue-600 rounded-3xl flex items-center justify-center shadow-lg shadow-blue-500/20 overflow-hidden">
-                                        {/* Ganti ikon gembok di bawah dengan <img src={LOGO_URL} ... /> jika sudah ada link logonya */}
-                                        <i data-lucide="shield-check" class="text-white w-12 h-12"></i>
+                                    <div className="w-24 h-24 rounded-3xl flex items-center justify-center overflow-hidden border border-slate-100 shadow-sm bg-slate-50">
+                                        <img 
+                                            src={LOGO_URL} 
+                                            alt="Logo PT. AMP" 
+                                            className="w-full h-full object-contain"
+                                            onError={(e) => {
+                                                // Fallback jika link bermasalah atau izin belum dibuka
+                                                e.target.style.display = 'none';
+                                                e.target.nextSibling.style.display = 'block';
+                                            }}
+                                        />
+                                        <div style={{display: 'none'}} className="text-blue-600">
+                                            <i data-lucide="shield-check" class="w-12 h-12"></i>
+                                        </div>
                                     </div>
                                 </div>
                                 <h1 className="text-xl font-bold text-slate-800 uppercase tracking-tight leading-tight">
                                     PT. ALUSINDO MITRA PROPERTI
                                 </h1>
+                                 <h1 className="text-xl font text-slate-800 uppercase tracking-tight leading-tight">
+                                   Absensi Karyawan
+                                </h1>
                                 <div className="w-12 h-1 bg-blue-600 mx-auto mt-2 rounded-full"></div>
                             </div>
                             
                             <form onSubmit={handleLogin} className="space-y-4">
-                                <div className="relative">
-                                    <input name="id" type="text" required className="w-full px-5 py-4 rounded-2xl bg-slate-50 border border-slate-100 outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder="ID Karyawan" />
-                                </div>
-                                <div className="relative">
-                                    <input name="password" type="password" required className="w-full px-5 py-4 rounded-2xl bg-slate-50 border border-slate-100 outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder="Password" />
-                                </div>
-                                <button disabled={loading} className="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg hover:bg-blue-700 transition-all transform active:scale-[0.98]">
+                                <input name="id" type="text" required className="w-full px-5 py-4 rounded-2xl bg-slate-50 border border-slate-100 outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder="ID Karyawan" />
+                                <input name="password" type="password" required className="w-full px-5 py-4 rounded-2xl bg-slate-100 border border-slate-100 outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder="Password" />
+                                <button disabled={loading} className="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg hover:bg-blue-700 transition-all active:scale-[0.98]">
                                     {loading ? 'Menghubungkan...' : 'MASUK'}
                                 </button>
                             </form>
@@ -338,14 +350,14 @@
                                         } catch (err) { showMsg('error', 'Gagal simpan'); }
                                         setLoading(false);
                                     }} className="space-y-4">
-                                        <input name="id" placeholder="ID (cth: EMP001)" className="w-full p-4 rounded-2xl bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500 transition-all" required />
-                                        <input name="password" type="password" placeholder="Password" className="w-full p-4 rounded-2xl bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500 transition-all" required />
-                                        <input name="nama" placeholder="Nama Lengkap" className="w-full p-4 rounded-2xl bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500 transition-all" required />
-                                        <select name="jabatan" className="w-full p-4 rounded-2xl bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500 transition-all">
+                                        <input name="id" placeholder="ID (cth: EMP001)" className="w-full p-4 rounded-2xl bg-slate-50 border border-slate-100 outline-none focus:ring-2 focus:ring-blue-500 transition-all" required />
+                                        <input name="password" type="password" placeholder="Password" className="w-full p-4 rounded-2xl bg-slate-50 border border-slate-100 outline-none focus:ring-2 focus:ring-blue-500 transition-all" required />
+                                        <input name="nama" placeholder="Nama Lengkap" className="w-full p-4 rounded-2xl bg-slate-50 border border-slate-100 outline-none focus:ring-2 focus:ring-blue-500 transition-all" required />
+                                        <select name="jabatan" className="w-full p-4 rounded-2xl bg-slate-50 border border-slate-100 outline-none focus:ring-2 focus:ring-blue-500 transition-all">
                                             <option value="Staff">Staff</option>
                                             <option value="Admin">Admin</option>
                                         </select>
-                                        <button className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold uppercase tracking-widest hover:bg-slate-800 transition-colors">Simpan Karyawan</button>
+                                        <button className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold uppercase tracking-widest hover:bg-slate-800 transition-colors shadow-lg">Simpan Karyawan</button>
                                     </form>
                                 </div>
                             )}
@@ -360,5 +372,3 @@
     </script>
 </body>
 </html>
-
-
