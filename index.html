@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Presensi PT. AMP</title>
+    <title>Sistem Absensi PT. AMP</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -80,6 +80,13 @@
                     else showMsg('error', data.message);
                 } catch (err) { showMsg('error', 'Koneksi error'); }
                 setLoading(false);
+            };
+
+            // Fungsi untuk Logout
+            const handleLogout = () => {
+                setUser(null);
+                setView('login');
+                setHistory([]);
             };
 
             const startCamera = async (type) => {
@@ -174,15 +181,31 @@
                     <div className="min-h-screen flex items-center justify-center p-6 bg-[#0f172a]">
                         <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-10 shadow-2xl animate-in">
                             <div className="text-center mb-10">
-                                <div className="w-20 h-20 bg-blue-600 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-xl shadow-blue-500/20">
-                                    <i data-lucide="lock" class="text-white w-10 h-10"></i>
+                                {/* Container Logo Image */}
+                                <div className="mb-6 flex justify-center">
+                                    <div className="w-24 h-24 rounded-3xl flex items-center justify-center overflow-hidden border border-slate-100 shadow-sm bg-slate-50">
+                                        <img 
+                                            src={LOGO_URL} 
+                                            alt="Logo PT. AMP" 
+                                            className="w-full h-full object-contain p-2"
+                                            onError={(e) => {
+                                                e.target.style.display = 'none';
+                                                e.target.nextSibling.style.display = 'block';
+                                            }}
+                                        />
+                                        <div style={{display: 'none'}} className="text-blue-600">
+                                            <i data-lucide="shield-check" class="w-12 h-12"></i>
+                                        </div>
+                                    </div>
                                 </div>
                                 <h1 className="text-xl font-bold text-slate-800 tracking-tight leading-none uppercase">PT. ALUSINDO MITRA PROPERTI</h1>
                             </div>
                             <form onSubmit={handleLogin} className="space-y-4">
                                 <input name="id" placeholder="ID Karyawan" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500" required />
                                 <input name="password" type="password" placeholder="Password" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500" required />
-                                <button disabled={loading} className="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg hover:bg-blue-700 transition-all uppercase tracking-widest text-sm">Masuk</button>
+                                <button disabled={loading} className="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg hover:bg-blue-700 transition-all uppercase tracking-widest text-sm">
+                                    {loading ? 'Menghubungkan server...' : 'Masuk'}
+                                </button>
                             </form>
                             {message && <p className="text-red-500 text-center mt-4 text-xs font-bold uppercase">{message.text}</p>}
                         </div>
@@ -331,7 +354,7 @@
                             <img src={LOGO_URL} className="w-12 h-12 object-contain" />
                             <div><h2 className="font-bold text-slate-800 text-base leading-tight">{user.nama}</h2><p className="text-[10px] text-blue-600 font-bold uppercase tracking-widest">{user.role}</p></div>
                         </div>
-                        <button onClick={() => setUser(null)} className="p-3 bg-red-50 text-red-500 rounded-2xl hover:bg-red-100 transition-colors"><i data-lucide="log-out" class="w-5 h-5"></i></button>
+                        <button onClick={handleLogout} className="p-3 bg-red-50 text-red-500 rounded-2xl hover:bg-red-100 transition-colors"><i data-lucide="log-out" class="w-5 h-5"></i></button>
                     </div>
 
                     <div className="flex-1 p-5 space-y-6 overflow-y-auto">
@@ -392,4 +415,3 @@
     </script>
 </body>
 </html>
-
