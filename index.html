@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistem Absensi PT. AMP</title>
+    <title>Presensi PT. AMP</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -24,7 +24,7 @@
     <script type="text/babel">
         const { useState, useRef, useEffect } = React;
 
-        const APP_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwuzsKwiT5zvWgTj7143jyUv6i30XQLoyDZf67UBf-fgbjfW2VNYk4G4H5k7ROjuT5J/exec'; 
+        const APP_SCRIPT_URL = 'URL_WEB_APP_SCRIPT_ANDA'; 
         const LOGO_URL = 'https://lh3.googleusercontent.com/d/1A9rh7e8Qx6K73-7tRMUOtFul-jXaYUxs'; 
 
         function App() {
@@ -82,8 +82,10 @@
                 setLoading(false);
             };
 
-            const startCamera = async () => {
-                setView('camera');
+            const startCamera = async (type) => {
+                setAttendanceType(type);
+                setView('camera'); // Masuk ke mode kamera (popup)
+                
                 if (navigator.geolocation) {
                     navigator.geolocation.getCurrentPosition(async (pos) => {
                         try {
@@ -93,9 +95,15 @@
                         } catch (e) { setLocation({ address: "Lokasi tidak terdeteksi" }); }
                     });
                 }
+
                 setTimeout(async () => {
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-                    if (videoRef.current) videoRef.current.srcObject = stream;
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+                        if (videoRef.current) videoRef.current.srcObject = stream;
+                    } catch (err) {
+                        showMsg('error', 'Gagal mengakses kamera');
+                        setView('dashboard');
+                    }
                 }, 300);
             };
 
@@ -137,7 +145,7 @@
                     const result = await res.json();
                     if (result.success) {
                         showMsg('success', 'Berhasil Absen!');
-                        if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+                        if (video && video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
                         setView('dashboard');
                         fetchHistory();
                     }
@@ -148,7 +156,7 @@
             const exportPayslip = () => {
                 html2canvas(payslipRef.current, { scale: 2 }).then(canvas => {
                     const link = document.createElement('a');
-                    link.download = `SlipGaji_PTAMP_${user.nama}_${new Date().getMonth()+1}.png`;
+                    link.download = `SlipGaji_PTAMP_${user.nama}.png`;
                     link.href = canvas.toDataURL();
                     link.click();
                 });
@@ -184,21 +192,46 @@
 
             return (
                 <div className="min-h-screen max-w-lg mx-auto bg-[#f8fafc] flex flex-col shadow-2xl relative">
+                    {/* MODAL LOADING */}
                     {isFetching && (
-                        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+                        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/40 backdrop-blur-sm">
                             <div className="bg-white p-8 rounded-3xl flex flex-col items-center gap-4 shadow-xl">
                                 <div className="spinner"></div>
-                                <p className="font-bold text-slate-800">Sinkronisasi data...</p>
+                                <p className="font-bold text-slate-800 text-sm">Menghubungkan ke server...</p>
                             </div>
                         </div>
                     )}
 
+                    {/* MODAL KAMERA (POPUP) */}
+                    {view === 'camera' && (
+                        <div className="fixed inset-0 z-[110] bg-black flex flex-col animate-in fade-in">
+                            <video ref={videoRef} autoPlay playsInline className="w-full flex-1 object-cover scale-x-[-1]" />
+                            <canvas ref={canvasRef} width="640" height="480" className="hidden" />
+                            <div className="absolute inset-x-0 bottom-0 p-10 bg-gradient-to-t from-black via-black/40 to-transparent text-white space-y-8">
+                                <div className="flex gap-4 items-start bg-black/50 p-5 rounded-3xl backdrop-blur-xl border border-white/10 shadow-2xl">
+                                    <i data-lucide="map-pin" class="text-red-500 w-5 h-5 shrink-0 mt-1"></i>
+                                    <p className="text-[11px] leading-relaxed font-medium opacity-90">{location.address}</p>
+                                </div>
+                                <div className="flex justify-between items-center px-6">
+                                    <button onClick={() => { if(videoRef.current?.srcObject) videoRef.current.srcObject.getTracks().forEach(t=>t.stop()); setView('dashboard'); }} className="text-white font-bold bg-white/10 px-8 py-3 rounded-2xl backdrop-blur-md border border-white/10 hover:bg-white/20 transition-all">Batal</button>
+                                    <button disabled={loading} onClick={checkOTAndSubmit} className="w-24 h-24 bg-white rounded-full p-1.5 shadow-[0_0_50px_rgba(255,255,255,0.4)] hover:scale-105 active:scale-95 transition-all">
+                                        <div className="w-full h-full border-4 border-slate-100 rounded-full flex items-center justify-center">
+                                            {loading ? <div className="spinner !border-t-blue-600"></div> : <div className="w-16 h-16 bg-blue-600 rounded-full shadow-inner"></div>}
+                                        </div>
+                                    </button>
+                                    <div className="w-24" />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODAL TUGAS LEMBUR */}
                     {showOTModal && (
-                        <div className="fixed inset-0 z-[101] bg-black/60 flex items-center justify-center p-6 backdrop-blur-sm">
-                            <div className="bg-white w-full rounded-[2rem] p-8 space-y-6 shadow-2xl animate-in">
+                        <div className="fixed inset-0 z-[115] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm">
+                            <div className="bg-white w-full rounded-[2.5rem] p-8 space-y-6 shadow-2xl animate-in">
                                 <div className="text-center">
                                     <h3 className="font-bold text-lg text-slate-800 uppercase tracking-wide">Input Tugas Lembur</h3>
-                                    <p className="text-xs text-slate-400 mt-1">Lembur Anda akan dicatat dalam slip gaji</p>
+                                    <p className="text-xs text-slate-400 mt-1">Selesaikan rincian untuk slip gaji</p>
                                 </div>
                                 <textarea className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl h-32 outline-none focus:ring-2 focus:ring-orange-500 text-sm" placeholder="Apa yang Anda kerjakan? (Contoh: Shop Drawing Jln. Garut)" onChange={e => setOvertimeTask(e.target.value)} />
                                 <div className="flex gap-3">
@@ -209,8 +242,9 @@
                         </div>
                     )}
 
+                    {/* VIEW SLIP GAJI */}
                     {showPayslip && (
-                        <div className="fixed inset-0 z-[105] bg-slate-900/95 flex flex-col items-center p-4 overflow-y-auto pt-10">
+                        <div className="fixed inset-0 z-[116] bg-slate-900/95 flex flex-col items-center p-4 overflow-y-auto pt-10">
                             <div className="w-full max-w-2xl flex justify-between mb-6">
                                 <button onClick={() => setShowPayslip(false)} className="bg-white/10 text-white px-8 py-3 rounded-2xl font-bold border border-white/10 flex items-center gap-2"><i data-lucide="arrow-left" class="w-4 h-4"></i> Kembali</button>
                                 <button onClick={exportPayslip} className="bg-[#b4941f] text-white px-8 py-3 rounded-2xl font-bold shadow-xl flex items-center gap-2"><i data-lucide="download" class="w-4 h-4"></i> Unduh PNG</button>
@@ -249,7 +283,6 @@
                                         <h4 className="bg-slate-100 p-2 px-4 font-bold text-xs uppercase tracking-widest border-l-4 border-red-500">POTONGAN</h4>
                                         <div className="text-xs space-y-2 px-4 text-red-600">
                                             <div className="flex justify-between"><span>Absensi ({hariAbsen} Hari)</span><span className="font-bold">{potonganAbsen.toLocaleString()}</span></div>
-                                            <div className="flex justify-between"><span>Kasbon</span><span className="font-bold">0</span></div>
                                             <div className="flex justify-between font-bold border-t border-slate-200 pt-2 text-slate-800"><span>TOTAL POTONGAN</span><span>{potonganAbsen.toLocaleString()}</span></div>
                                         </div>
                                     </div>
@@ -259,18 +292,16 @@
                                     TOTAL GAJI DITERIMA : <span className="text-3xl ml-6">Rp {totalGaji.toLocaleString()}</span>
                                 </div>
 
-                                <div className="mt-4 text-[11px] font-bold text-slate-500">
+                                <div className="mt-4 text-[11px] font-bold text-slate-500 uppercase tracking-wide">
                                     NOMOR REKENING : {user.noRek} (BCA - {user.nama})
                                 </div>
 
-                                <div className="mt-12">
-                                    <p className="text-[10px] font-bold mb-3 uppercase italic text-slate-400">Form Lembur Karyawan :</p>
+                                <div className="mt-10">
                                     <table className="w-full border-collapse border border-slate-800 text-[10px]">
-                                        <thead className="bg-slate-50">
+                                        <thead className="bg-slate-50 uppercase tracking-tighter">
                                             <tr>
                                                 <th className="border border-slate-800 p-2">No</th>
-                                                <th className="border border-slate-800 p-2">Tgl/Lembur</th>
-                                                <th className="border border-slate-800 p-2">Tugas Lembur</th>
+                                                <th className="border border-slate-800 p-2 text-left">Tgl & Tugas Lembur</th>
                                                 <th className="border border-slate-800 p-2">Jam Selesai</th>
                                                 <th className="border border-slate-800 p-2">Total Jam</th>
                                             </tr>
@@ -279,14 +310,13 @@
                                             {history.filter(h => h.lembur > 0 && h.tipe === 'OUT').map((h, i) => (
                                                 <tr key={i}>
                                                     <td className="border border-slate-800 p-2 text-center">{i+1}</td>
-                                                    <td className="border border-slate-800 p-2 text-center">{h.tanggal}</td>
-                                                    <td className="border border-slate-800 p-2">{h.tugasLembur}</td>
+                                                    <td className="border border-slate-800 p-2">{h.tanggal} - {h.tugasLembur}</td>
                                                     <td className="border border-slate-800 p-2 text-center">{h.waktu}</td>
-                                                    <td className="border border-slate-800 p-2 text-center font-bold">{Math.round(Number(h.lembur)/30000)} Jam</td>
+                                                    <td className="border border-slate-800 p-2 text-center font-bold uppercase">{Math.round(Number(h.lembur)/30000)} Jam</td>
                                                 </tr>
                                             ))}
                                             <tr className="bg-yellow-100 font-bold">
-                                                <td colSpan="4" className="border border-slate-800 p-2 text-right">TOTAL JAM LEMBUR</td>
+                                                <td colSpan="3" className="border border-slate-800 p-2 text-right">TOTAL JAM LEMBUR</td>
                                                 <td className="border border-slate-800 p-2 text-center">{history.filter(h => h.lembur > 0 && h.tipe === 'OUT').reduce((a,c)=>a+Math.round(Number(c.lembur)/30000),0)}</td>
                                             </tr>
                                         </tbody>
@@ -306,10 +336,10 @@
 
                     <div className="flex-1 p-5 space-y-6 overflow-y-auto">
                         <div className="grid grid-cols-2 gap-4">
-                            <button onClick={() => { setAttendanceType('IN'); startCamera(); }} className="bg-emerald-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-emerald-200 transition-all active:scale-95">
+                            <button onClick={() => startCamera('IN')} className="bg-emerald-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-emerald-200 transition-all active:scale-95">
                                 <i data-lucide="log-in" class="w-6 h-6"></i><span className="font-bold text-xs uppercase tracking-widest">Absen Masuk</span>
                             </button>
-                            <button onClick={() => { setAttendanceType('OUT'); startCamera(); }} className="bg-orange-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-orange-200 transition-all active:scale-95">
+                            <button onClick={() => startCamera('OUT')} className="bg-orange-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-orange-200 transition-all active:scale-95">
                                 <i data-lucide="log-out" class="w-6 h-6"></i><span className="font-bold text-xs uppercase tracking-widest">Absen Pulang</span>
                             </button>
                         </div>
@@ -353,28 +383,6 @@
                             )}
                         </div>
                     </div>
-
-                    {view === 'camera' && (
-                        <div className="bg-black flex-1 flex flex-col relative">
-                            <video ref={videoRef} autoPlay playsInline className="w-full flex-1 object-cover scale-x-[-1]" />
-                            <canvas ref={canvasRef} width="640" height="480" className="hidden" />
-                            <div className="absolute inset-x-0 bottom-0 p-10 bg-gradient-to-t from-black via-black/40 to-transparent text-white space-y-8">
-                                <div className="flex gap-4 items-start bg-black/50 p-5 rounded-3xl backdrop-blur-xl border border-white/10 shadow-2xl">
-                                    <i data-lucide="map-pin" class="text-red-500 w-5 h-5 shrink-0 mt-1"></i>
-                                    <p className="text-[11px] leading-relaxed font-medium opacity-90">{location.address}</p>
-                                </div>
-                                <div className="flex justify-between items-center px-6">
-                                    <button onClick={() => { if(videoRef.current?.srcObject) videoRef.current.srcObject.getTracks().forEach(t=>t.stop()); setView('dashboard'); }} className="text-white font-bold bg-white/10 px-8 py-3 rounded-2xl backdrop-blur-md border border-white/10 hover:bg-white/20 transition-all">Batal</button>
-                                    <button disabled={loading} onClick={checkOTAndSubmit} className="w-24 h-24 bg-white rounded-full p-1.5 shadow-[0_0_50px_rgba(255,255,255,0.4)] hover:scale-105 active:scale-95 transition-all">
-                                        <div className="w-full h-full border-4 border-slate-100 rounded-full flex items-center justify-center">
-                                            {loading ? <div className="spinner !border-t-blue-600"></div> : <div className="w-16 h-16 bg-blue-600 rounded-full shadow-inner"></div>}
-                                        </div>
-                                    </button>
-                                    <div className="w-24" />
-                                </div>
-                            </div>
-                        </div>
-                    )}
                 </div>
             );
         }
