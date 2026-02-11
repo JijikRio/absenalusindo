@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistem Absen PT. AMP</title>
+    <title>Sistem Absensi PT. AMP</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -15,7 +15,9 @@
         body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #0f172a; }
         .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #b4941f; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .payslip-box { width: 750px; background: white; padding: 40px; color: #1e293b; }
+        .payslip-box { width: 850px; background: white; padding: 40px; color: #1e293b; }
+        .report-box { width: 600px; background: white; padding: 30px; color: #1e293b; }
+        @media print { .no-print { display: none; } }
     </style>
 </head>
 <body>
@@ -24,7 +26,7 @@
     <script type="text/babel">
         const { useState, useRef, useEffect, useMemo } = React;
 
-        const APP_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz-I3R6mjGlBhN3kcDMNjWeVf8PvhOES7I2nVDGHZsJGhp599UGrOflK6-bgXR45_fV/exec'; 
+        const APP_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw_GPzYIlHwDIxD-t6TOoba5AGLMA-E8GzalmeibrPfaRq0S1mJACewLrV1lMG1m081/exec'; 
         const LOGO_URL = 'https://lh3.googleusercontent.com/d/1A9rh7e8Qx6K73-7tRMUOtFul-jXaYUxs'; 
 
         const BULAN_INDO = [
@@ -41,20 +43,36 @@
             const [location, setLocation] = useState({ address: 'Mencari lokasi...', coords: null });
             const [attendanceType, setAttendanceType] = useState('IN');
             const [history, setHistory] = useState([]);
+            const [usersMeta, setUsersMeta] = useState({}); 
+            const [holidays, setHolidays] = useState([]); 
             const [overtimeTask, setOvertimeTask] = useState('');
             const [showOTModal, setShowOTModal] = useState(false);
             const [showPayslip, setShowPayslip] = useState(false);
             
-            // State Admin Features
             const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
             const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
             const [payslipUser, setPayslipUser] = useState(null);
+            
             const [showKasbonModal, setShowKasbonModal] = useState(false);
+            const [showHolidayModal, setShowHolidayModal] = useState(false);
+            
+            // New state for Daily Report
+            const [showDailyReportModal, setShowDailyReportModal] = useState(false);
+            const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
+
             const [kasbonData, setKasbonData] = useState({ id: '', amount: '' });
+            const [holidayInput, setHolidayInput] = useState({ date: '', info: '' });
 
             const videoRef = useRef(null);
             const canvasRef = useRef(null);
             const payslipRef = useRef(null);
+            const reportRef = useRef(null);
+
+            const isAdmin = useMemo(() => {
+                if (!user) return false;
+                const roleStr = (user.role || user.jabatan || "").toLowerCase().trim();
+                return roleStr === 'admin';
+            }, [user]);
 
             useEffect(() => { 
                 lucide.createIcons(); 
@@ -71,11 +89,21 @@
                 try {
                     const res = await fetch(APP_SCRIPT_URL, {
                         method: 'POST',
-                        body: JSON.stringify({ action: 'getHistory', id: user.id, role: user.role })
+                        body: JSON.stringify({ action: 'getHistory', id: user.id, role: user.role || user.jabatan })
                     });
                     const result = await res.json();
-                    if (result.success) setHistory(result.data);
-                } catch (err) { showMsg('error', 'Gagal memuat riwayat'); }
+                    if (result.success) {
+                        setHistory(result.data);
+                        if (result.usersMeta) {
+                            const normalizedMeta = {};
+                            Object.keys(result.usersMeta).forEach(key => {
+                                normalizedMeta[String(key).trim().toLowerCase()] = result.usersMeta[key];
+                            });
+                            setUsersMeta(normalizedMeta);
+                        }
+                        if (result.holidays) setHolidays(result.holidays);
+                    }
+                } catch (err) { showMsg('error', 'Gagal sinkronisasi data'); }
                 setIsFetching(false);
             };
 
@@ -88,10 +116,7 @@
                         body: JSON.stringify({ action: 'login', id: e.target.id.value, password: e.target.password.value })
                     });
                     const data = await res.json();
-                    if (data.success) { 
-                        setUser(data.user); 
-                        setView('dashboard'); 
-                    }
+                    if (data.success) { setUser(data.user); setView('dashboard'); }
                     else showMsg('error', data.message);
                 } catch (err) { showMsg('error', 'Koneksi error'); }
                 setLoading(false);
@@ -101,6 +126,8 @@
                 setUser(null);
                 setView('login');
                 setHistory([]);
+                setUsersMeta({});
+                setHolidays([]);
             };
 
             const startCamera = async (type) => {
@@ -151,7 +178,7 @@
                     });
                     const result = await res.json();
                     if (result.success) {
-                        showMsg('success', 'Berhasil Absen!');
+                        showMsg('success', 'Presensi Berhasil!');
                         if (video && video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
                         setView('dashboard');
                         fetchHistory();
@@ -170,12 +197,34 @@
                     });
                     const result = await res.json();
                     if (result.success) {
-                        showMsg('success', 'Kasbon berhasil diperbarui!');
+                        showMsg('success', 'Kasbon telah dicatat!');
                         setShowKasbonModal(false);
                         setKasbonData({ id: '', amount: '' });
+                        fetchHistory(); 
                     }
-                } catch (err) { showMsg('error', 'Gagal update kasbon'); }
+                } catch (err) { showMsg('error', 'Gagal mencatat kasbon'); }
                 setLoading(false);
+            };
+
+            const handleAddHoliday = async () => {
+                if (!holidayInput.date || !holidayInput.info) return showMsg('error', 'Lengkapi data libur');
+                setLoading(true);
+                try {
+                    await fetch(APP_SCRIPT_URL, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        headers: { 'Content-Type': 'text/plain' },
+                        body: JSON.stringify({ action: 'addHoliday', ...holidayInput })
+                    });
+                    showMsg('success', 'Hari libur berhasil disimpan!');
+                    setShowHolidayModal(false);
+                    setHolidayInput({ date: '', info: '' });
+                    setTimeout(fetchHistory, 1500);
+                } catch (err) { 
+                    showMsg('error', 'Terjadi gangguan koneksi'); 
+                } finally {
+                    setLoading(false);
+                }
             };
 
             const exportPayslip = () => {
@@ -187,6 +236,35 @@
                 });
             };
 
+            // Download function for Daily Report
+            const exportDailyReport = () => {
+                html2canvas(reportRef.current, { scale: 2 }).then(canvas => {
+                    const link = document.createElement('a');
+                    const [y, m, d] = reportDate.split('-');
+                    link.download = `Laporan_Absensi_${d}_${m}_${y}.png`;
+                    link.href = canvas.toDataURL();
+                    link.click();
+                });
+            };
+
+            const formatTimeDisplay = (timeStr) => {
+                if (!timeStr) return '-';
+                const str = String(timeStr);
+                if (str.includes('T')) {
+                    const timePart = str.split('T')[1];
+                    let hh = parseInt(timePart.substring(0, 2));
+                    let mm = timePart.substring(3, 5);
+                    if (str.includes('1899')) {
+                        hh = (hh + 7) % 24; 
+                    }
+                    return `${String(hh).padStart(2, '0')}:${mm}`;
+                }
+                if (str.includes(':')) {
+                    return str.substring(0, 5);
+                }
+                return str;
+            };
+
             const filteredHistory = useMemo(() => {
                 return history.filter(item => {
                     const [d, m, y] = item.tanggal.split('/');
@@ -194,31 +272,104 @@
                 });
             }, [history, selectedMonth, selectedYear]);
 
+            // Logic to get data for a specific day report
+            const dailyData = useMemo(() => {
+                const [ry, rm, rd] = reportDate.split('-');
+                const targetDateStr = `${rd}/${rm}/${ry}`;
+                
+                // Get all employees from usersMeta
+                const list = Object.values(usersMeta).map(emp => {
+                    const inRecord = history.find(h => h.id === emp.id && h.tanggal === targetDateStr && h.tipe === 'IN');
+                    const outRecord = history.find(h => h.id === emp.id && h.tanggal === targetDateStr && h.tipe === 'OUT');
+                    
+                    return {
+                        nama: emp.nama,
+                        jabatan: emp.jabatan || emp.role,
+                        checkIn: inRecord ? formatTimeDisplay(inRecord.waktu) : '-',
+                        checkOut: outRecord ? formatTimeDisplay(outRecord.waktu) : '-',
+                        status: inRecord ? inRecord.status : (outRecord ? 'Hanya Out' : 'Mangkir/Libur'),
+                        telat: inRecord && inRecord.telat > 0 ? inRecord.telat : 0
+                    };
+                });
+                return { date: targetDateStr, list };
+            }, [reportDate, history, usersMeta]);
+
             const karyawanList = useMemo(() => {
                 const groups = {};
                 filteredHistory.forEach(h => {
-                    if (!groups[h.id]) {
-                        groups[h.id] = { 
-                            id: h.id, nama: h.nama, count: 0, data: [],
-                            gajiPokok: user.role === 'Admin' ? 4000000 : user.gajiPokok,
-                            noRek: user.role === 'Admin' ? 'N/A' : user.noRek,
-                            kasbon: user.role === 'Admin' ? 0 : (user.kasbon || 0)
+                    const cleanId = String(h.id).trim().toLowerCase();
+                    if (!groups[cleanId]) {
+                        const meta = usersMeta[cleanId] || {};
+                        groups[cleanId] = { 
+                            id: h.id, 
+                            nama: h.nama, 
+                            count: 0, 
+                            data: [],
+                            gajiPokok: meta.gajiPokok || 4000000,
+                            noRek: meta.noRek || '-',
+                            kasbon: meta.kasbon || 0,
+                            role: meta.jabatan || meta.role || h.role || 'KARYAWAN'
                         };
                     }
-                    groups[h.id].data.push(h);
-                    if (h.tipe === 'IN') groups[h.id].count++;
+                    groups[cleanId].data.push(h);
+                    if (h.tipe === 'IN') groups[cleanId].count++;
                 });
                 return Object.values(groups);
-            }, [filteredHistory, user]);
+            }, [filteredHistory, usersMeta]);
 
             const calculatePayslipData = (targetUser, userHistory) => {
+                const cleanId = String(targetUser.id).trim().toLowerCase();
+                const meta = usersMeta[cleanId] || targetUser;
                 const totalLembur = userHistory.reduce((acc, curr) => acc + (Number(curr.lembur) || 0), 0);
-                const hariHadir = [...new Set(userHistory.filter(h => h.tipe === 'IN').map(h => h.tanggal))].length;
-                const hariAbsen = Math.max(0, 26 - hariHadir);
-                const potonganAbsen = Math.round((Number(targetUser?.gajiPokok || 4000000) / 26) * hariAbsen);
-                const kasbon = Number(targetUser?.kasbon || 0);
-                const totalGaji = Number(targetUser?.gajiPokok || 4000000) + totalLembur - potonganAbsen - kasbon;
-                return { totalLembur, hariHadir, hariAbsen, potonganAbsen, kasbon, totalGaji };
+                
+                const now = new Date();
+                const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
+                const limitDay = (selectedMonth === now.getMonth() && selectedYear === now.getFullYear()) 
+                    ? now.getDate() 
+                    : daysInMonth;
+
+                let hariMangkir = 0;
+                let hariWajibKerjaBulanIni = 0;
+                const setAbsen = new Set(userHistory.filter(h => h.tipe === 'IN').map(h => h.tanggal));
+                
+                const normalizeDateStr = (dateInput) => {
+                    if (!dateInput) return "";
+                    let d, m, y;
+                    const str = String(dateInput);
+                    if (str.includes('/')) {
+                        [d, m, y] = str.split('/');
+                        if (y && y.length === 2) y = "20" + y;
+                    } else if (str.includes('-')) {
+                        const parts = str.split('T')[0].split('-');
+                        [y, m, d] = parts;
+                    } else {
+                        return str;
+                    }
+                    return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+                };
+
+                for (let d = 1; d <= daysInMonth; d++) {
+                    const dateObj = new Date(selectedYear, selectedMonth, d);
+                    const currentLoopDateStr = `${String(d).padStart(2, '0')}/${String(selectedMonth + 1).padStart(2, '0')}/${selectedYear}`;
+                    const isSunday = dateObj.getDay() === 0;
+                    const isHoliday = holidays.some(h => normalizeDateStr(h.date) === currentLoopDateStr);
+                    
+                    if (!isSunday && !isHoliday) {
+                        hariWajibKerjaBulanIni++;
+                        if (d <= limitDay && !setAbsen.has(currentLoopDateStr)) {
+                            hariMangkir++;
+                        }
+                    }
+                }
+
+                const gajiPokok = Number(meta.gajiPokok || 4000000);
+                const gajiPerHari = Math.round(gajiPokok / 26);
+                const potonganAbsen = gajiPerHari * hariMangkir;
+                const kasbon = Number(meta.kasbon || 0);
+                const totalGaji = gajiPokok + totalLembur - potonganAbsen - kasbon;
+                const hariHadir = setAbsen.size;
+
+                return { totalLembur, hariHadir, hariMangkir, potonganAbsen, kasbon, totalGaji, meta, hariWajibKerja: hariWajibKerjaBulanIni, gajiPokok, userHistory };
             };
 
             if (view === 'login') {
@@ -228,17 +379,17 @@
                             <div className="text-center mb-10">
                                 <div className="mb-6 flex justify-center">
                                     <div className="w-24 h-24 rounded-3xl flex items-center justify-center overflow-hidden border border-slate-100 shadow-sm bg-slate-50">
-                                        <img src={LOGO_URL} alt="Logo" className="w-full h-full object-contain p-2" onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'block'; }} />
-                                        <div style={{display: 'none'}} className="text-blue-600"><i data-lucide="shield-check" class="w-12 h-12"></i></div>
+                                        <img src={LOGO_URL} alt="Logo" className="w-full h-full object-contain p-2" />
                                     </div>
                                 </div>
                                 <h1 className="text-xl font-bold text-slate-800 tracking-tight leading-none uppercase">PT. ALUSINDO MITRA PROPERTI</h1>
+                                <h1 className="text-m font text-slate-800 tracking-tight leading-none uppercase">Head Office Absensi</h1>
                             </div>
                             <form onSubmit={handleLogin} className="space-y-4">
                                 <input name="id" placeholder="ID Karyawan" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500" required />
                                 <input name="password" type="password" placeholder="Password" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500" required />
                                 <button disabled={loading} className="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg hover:bg-blue-700 transition-all uppercase tracking-widest text-sm">
-                                    {loading ? 'Menghubungkan server...' : 'Masuk'}
+                                    {loading ? 'Sinkronisasi...' : 'Masuk Sistem'}
                                 </button>
                             </form>
                             {message && <p className="text-red-500 text-center mt-4 text-xs font-bold uppercase">{message.text}</p>}
@@ -248,83 +399,117 @@
             }
 
             return (
-                <div className="min-h-screen max-w-lg mx-auto bg-[#f8fafc] flex flex-col shadow-2xl relative">
-                    {/* LOADING OVERLAY */}
+                <div className="min-h-screen max-lg mx-auto bg-[#f8fafc] flex flex-col shadow-2xl relative">
                     {isFetching && (
                         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/40 backdrop-blur-sm">
                             <div className="bg-white p-8 rounded-3xl flex flex-col items-center gap-4 shadow-xl">
                                 <div className="spinner"></div>
-                                <p className="font-bold text-slate-800 text-sm">Menghubungkan ke server...</p>
+                                <p className="font-bold text-slate-800 text-sm tracking-widest uppercase italic">Memperbarui Data...</p>
                             </div>
                         </div>
                     )}
 
-                    {/* MODAL KASBON (ADMIN ONLY) */}
+                    {showHolidayModal && (
+                        <div className="fixed inset-0 z-[130] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm animate-in fade-in">
+                            <div className="bg-white w-full rounded-[2.5rem] p-8 space-y-6 shadow-2xl">
+                                <div className="text-center">
+                                    <h3 className="font-bold text-lg text-slate-800 uppercase tracking-wide">Input Tanggal Merah</h3>
+                                    <p className="text-xs text-slate-400 mt-1">Gaji tidak dipotong di hari ini</p>
+                                </div>
+                                <div className="space-y-4">
+                                    <input type="date" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-red-500 text-sm font-bold uppercase" onChange={(e) => { const d = new Date(e.target.value); setHolidayInput({...holidayInput, date: `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`}); }} />
+                                    <input type="text" placeholder="Keterangan (Contoh: Libur Lebaran)" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-red-500 text-sm font-bold" value={holidayInput.info} onChange={(e) => setHolidayInput({...holidayInput, info: e.target.value})} />
+                                </div>
+                                <div className="flex gap-3">
+                                    <button onClick={() => setShowHolidayModal(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-400">Batal</button>
+                                    <button onClick={handleAddHoliday} disabled={loading} className="flex-1 bg-red-500 text-white py-4 rounded-2xl font-bold shadow-lg">Simpan Libur</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {showKasbonModal && (
                         <div className="fixed inset-0 z-[130] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm animate-in fade-in">
                             <div className="bg-white w-full rounded-[2.5rem] p-8 space-y-6 shadow-2xl">
                                 <div className="text-center">
-                                    <h3 className="font-bold text-lg text-slate-800 uppercase tracking-wide">Input Kasbon Karyawan</h3>
-                                    <p className="text-xs text-slate-400 mt-1">Nominal akan otomatis memotong gaji bulanan</p>
+                                    <h3 className="font-bold text-lg text-slate-800 uppercase tracking-wide">Catat Kasbon Baru</h3>
                                 </div>
                                 <div className="space-y-4">
-                                    <select 
-                                        className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold"
-                                        onChange={(e) => setKasbonData({...kasbonData, id: e.target.value})}
-                                    >
+                                    <select className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold" onChange={(e) => setKasbonData({...kasbonData, id: e.target.value})}>
                                         <option value="">-- Pilih Karyawan --</option>
-                                        {karyawanList.map(k => <option key={k.id} value={k.id}>{k.nama}</option>)}
+                                        {Object.values(usersMeta).map(k => <option key={k.id} value={k.id}>{k.nama}</option>)}
                                     </select>
-                                    <input 
-                                        type="number" 
-                                        placeholder="Nominal Kasbon (Contoh: 500000)" 
-                                        className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold"
-                                        value={kasbonData.amount}
-                                        onChange={(e) => setKasbonData({...kasbonData, amount: e.target.value})}
-                                    />
+                                    <input type="number" placeholder="Nominal Rp" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold" value={kasbonData.amount} onChange={(e) => setKasbonData({...kasbonData, amount: e.target.value})}/>
                                 </div>
                                 <div className="flex gap-3">
                                     <button onClick={() => setShowKasbonModal(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-400">Batal</button>
-                                    <button onClick={handleUpdateKasbon} disabled={loading} className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-bold shadow-lg shadow-blue-200">
-                                        {loading ? 'Menyimpan...' : 'Simpan Kasbon'}
-                                    </button>
+                                    <button onClick={handleUpdateKasbon} disabled={loading} className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-bold shadow-lg">Simpan</button>
                                 </div>
                             </div>
                         </div>
                     )}
 
-                    {/* MODAL KAMERA */}
-                    {view === 'camera' && (
-                        <div className="fixed inset-0 z-[110] bg-black flex flex-col animate-in fade-in">
-                            <video ref={videoRef} autoPlay playsInline className="w-full flex-1 object-cover scale-x-[-1]" />
-                            <canvas ref={canvasRef} width="640" height="480" className="hidden" />
-                            <div className="absolute inset-x-0 bottom-0 p-10 bg-gradient-to-t from-black via-black/40 to-transparent text-white space-y-8">
-                                <div className="flex gap-4 items-start bg-black/50 p-5 rounded-3xl backdrop-blur-xl border border-white/10 shadow-2xl">
-                                    <i data-lucide="map-pin" class="text-red-500 w-5 h-5 shrink-0 mt-1"></i>
-                                    <p className="text-[11px] leading-relaxed font-medium opacity-90">{location.address}</p>
-                                </div>
-                                <div className="flex justify-between items-center px-6">
-                                    <button onClick={() => { if(videoRef.current?.srcObject) videoRef.current.srcObject.getTracks().forEach(t=>t.stop()); setView('dashboard'); }} className="text-white font-bold bg-white/10 px-8 py-3 rounded-2xl backdrop-blur-md">Batal</button>
-                                    <button disabled={loading} onClick={() => { const h = new Date().getHours(); (attendanceType === 'OUT' && h >= 18) ? setShowOTModal(true) : submitData(''); }} className="w-24 h-24 bg-white rounded-full p-1.5 shadow-[0_0_50px_rgba(255,255,255,0.4)]">
-                                        <div className="w-full h-full border-4 border-slate-100 rounded-full flex items-center justify-center">
-                                            {loading ? <div className="spinner !border-t-blue-600"></div> : <div className="w-16 h-16 bg-blue-600 rounded-full"></div>}
+                    {/* MODAL LAPORAN HARIAN (DAILY REPORT) */}
+                    {showDailyReportModal && (
+                        <div className="fixed inset-0 z-[130] bg-slate-900/95 flex flex-col items-center p-4 overflow-y-auto pt-10 animate-in fade-in">
+                            <div className="w-full max-w-2xl flex justify-between mb-6 px-4">
+                                <button onClick={() => setShowDailyReportModal(false)} className="bg-white/10 text-white px-8 py-3 rounded-2xl font-bold border border-white/10 flex items-center gap-2"><i data-lucide="arrow-left" class="w-4 h-4"></i> Kembali</button>
+                                <button onClick={exportDailyReport} className="bg-emerald-600 text-white px-8 py-3 rounded-2xl font-bold shadow-xl flex items-center gap-2"><i data-lucide="download" class="w-4 h-4"></i> Unduh PNG</button>
+                            </div>
+
+                            <div className="bg-white p-4 rounded-2xl mb-6 w-full max-w-lg flex flex-col gap-2">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">Pilih Tanggal Laporan:</label>
+                                <input type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} className="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-sm font-bold" />
+                            </div>
+                            
+                            <div ref={reportRef} className="report-box shadow-2xl rounded-lg border-t-[8px] border-emerald-500">
+                                <div className="flex justify-between items-center border-b border-slate-200 pb-4 mb-6">
+                                    <div className="flex items-center gap-3">
+                                        <img src={LOGO_URL} className="w-12 h-12 object-contain" />
+                                        <div>
+                                            <h2 className="font-bold text-sm text-slate-800 uppercase leading-none">PT. ALUSINDO MITRA PROPERTI</h2>
+                                            <p className="text-[9px] text-slate-400 mt-1 uppercase font-bold tracking-tighter">Laporan Absensi Harian</p>
                                         </div>
-                                    </button>
-                                    <div className="w-24" />
+                                    </div>
+                                    <div className="text-right">
+                                        <h1 className="text-xl font-black text-emerald-600 italic uppercase">{dailyData.date}</h1>
+                                    </div>
                                 </div>
-                            </div>
-                        </div>
-                    )}
 
-                    {/* MODAL OT */}
-                    {showOTModal && (
-                        <div className="fixed inset-0 z-[115] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm">
-                            <div className="bg-white w-full rounded-[2.5rem] p-8 space-y-6 shadow-2xl animate-in">
-                                <div className="text-center"><h3 className="font-bold text-lg text-slate-800 uppercase tracking-wide">Tugas Lembur</h3></div>
-                                <textarea className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl h-32 outline-none focus:ring-2 focus:ring-orange-500 text-sm" placeholder="Apa yang Anda kerjakan?" onChange={e => setOvertimeTask(e.target.value)} />
-                                <div className="flex gap-3">
-                                    <button onClick={() => setShowOTModal(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-400">Batal</button>
-                                    <button onClick={() => submitData(overtimeTask)} className="flex-1 bg-orange-500 text-white py-4 rounded-2xl font-bold shadow-lg">Kirim</button>
+                                <table className="w-full border-collapse border border-slate-800 text-[10px]">
+                                    <thead className="bg-slate-100 uppercase font-bold text-center">
+                                        <tr>
+                                            <th className="border border-slate-800 p-2">Nama Karyawan</th>
+                                            <th className="border border-slate-800 p-2">Jabatan</th>
+                                            <th className="border border-slate-800 p-2">Masuk</th>
+                                            <th className="border border-slate-800 p-2">Pulang</th>
+                                            <th className="border border-slate-800 p-2">Keterangan</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {dailyData.list.map((row, i) => (
+                                            <tr key={i}>
+                                                <td className="border border-slate-800 p-2 font-bold uppercase">{row.nama}</td>
+                                                <td className="border border-slate-800 p-2 text-center uppercase">{row.jabatan}</td>
+                                                <td className="border border-slate-800 p-2 text-center font-bold text-emerald-600">{row.checkIn}</td>
+                                                <td className="border border-slate-800 p-2 text-center font-bold text-orange-600">{row.checkOut}</td>
+                                                <td className={`border border-slate-800 p-2 text-center text-[9px] font-black uppercase ${row.telat > 0 ? 'text-red-500' : 'text-slate-400'}`}>
+                                                    {row.telat > 0 ? `Telat ${row.telat}m` : row.status}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+
+                                <div className="mt-6 flex justify-between items-end border-t pt-4">
+                                    <div className="text-[8px] text-slate-300 italic uppercase">
+                                        *Laporan ini digenerate otomatis oleh sistem presensi PT AMP
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-[9px] font-bold text-slate-400 uppercase italic">Tangerang, {new Date().toLocaleDateString('id-ID')}</p>
+                                        <div className="h-10"></div>
+                                        <p className="text-[10px] font-black text-slate-800 border-t border-slate-800 pt-1 uppercase">Admin Operational</p>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -332,196 +517,203 @@
 
                     {/* VIEW SLIP GAJI */}
                     {showPayslip && payslipUser && (
-                        <div className="fixed inset-0 z-[116] bg-slate-900/95 flex flex-col items-center p-4 overflow-y-auto pt-10 animate-in fade-in">
-                            <div className="w-full max-w-2xl flex justify-between mb-6 px-4">
+                        <div className="fixed inset-0 z-[116] bg-slate-900/95 flex flex-col items-center p-4 overflow-y-auto pt-10 animate-in fade-in no-print">
+                            <div className="w-full max-w-4xl flex justify-between mb-6 px-4">
                                 <button onClick={() => setShowPayslip(false)} className="bg-white/10 text-white px-8 py-3 rounded-2xl font-bold border border-white/10 flex items-center gap-2"><i data-lucide="arrow-left" class="w-4 h-4"></i> Kembali</button>
                                 <button onClick={exportPayslip} className="bg-[#b4941f] text-white px-8 py-3 rounded-2xl font-bold shadow-xl flex items-center gap-2"><i data-lucide="download" class="w-4 h-4"></i> Unduh PNG</button>
                             </div>
                             
-                            <div ref={payslipRef} className="payslip-box shadow-2xl border-t-[10px] border-[#b4941f]">
+                            <div ref={payslipRef} className="payslip-box shadow-2xl border-t-[10px] border-[#b4941f] rounded-lg">
                                 <div className="flex justify-between items-start border-b border-slate-200 pb-6 mb-8">
                                     <div className="flex items-center gap-4">
                                         <img src={LOGO_URL} className="w-20 h-20 object-contain" />
                                         <div className="text-[10px] text-slate-500">
                                             <h2 className="font-bold text-base text-slate-800 uppercase leading-none">PT. ALUSINDO MITRA PROPERTI</h2>
-                                            <p className="mt-2 leading-relaxed">Jl. Amd Pr. Jaya No.38, Karang Tengah, Kota Tangerang</p>
+                                            <p className="mt-2 leading-relaxed italic uppercase font-bold tracking-tight">Arsitektur - Interior - Kontraktor</p>
                                         </div>
                                     </div>
                                     <div className="text-right"><h1 className="text-4xl font-black text-slate-800 tracking-tighter uppercase italic">SLIP GAJI</h1></div>
                                 </div>
 
-                                <div className="grid grid-cols-2 text-[12px] mb-10 gap-x-20 gap-y-2">
-                                    <div className="flex justify-between border-b border-slate-50 py-1"><span>Nama</span><span className="font-bold uppercase">{payslipUser.nama}</span></div>
-                                    <div className="flex justify-between border-b border-slate-50 py-1 text-right"><span>Jabatan</span><span className="font-bold uppercase">{payslipUser.role || "Karyawan"}</span></div>
-                                    <div className="flex justify-between border-b border-slate-50 py-1"><span>Periode</span><span className="font-bold uppercase">{BULAN_INDO[selectedMonth]} {selectedYear}</span></div>
-                                </div>
-
                                 {(() => {
-                                    const { totalLembur, hariHadir, hariAbsen, potonganAbsen, kasbon, totalGaji } = calculatePayslipData(payslipUser, payslipUser.data || history);
+                                    const { totalLembur, hariHadir, hariMangkir, potonganAbsen, kasbon, totalGaji, meta, hariWajibKerja, gajiPokok, userHistory } = calculatePayslipData(payslipUser, payslipUser.data || filteredHistory.filter(h => h.id === payslipUser.id));
+                                    
+                                    const lemburList = userHistory.filter(h => h.lembur > 0 && h.tipe === 'OUT');
+                                    const telatList = userHistory.filter(h => h.tipe === 'IN' && Number(h.telat) > 0);
+
                                     return (
                                         <React.Fragment>
+                                            <div className="grid grid-cols-2 text-[12px] mb-10 gap-x-20 gap-y-2">
+                                                <div className="flex justify-between border-b border-slate-50 py-1"><span>Nama</span><span className="font-bold uppercase">{payslipUser.nama}</span></div>
+                                                <div className="flex justify-between border-b border-slate-50 py-1 text-right"><span>Jabatan</span><span className="font-bold uppercase">{meta.jabatan || meta.role || "KARYAWAN"}</span></div>
+                                                <div className="flex justify-between border-b border-slate-50 py-1"><span>Periode</span><span className="font-bold uppercase">{BULAN_INDO[selectedMonth]} {selectedYear}</span></div>
+                                            </div>
+
                                             <div className="grid grid-cols-2 gap-10 mb-8">
                                                 <div className="space-y-4">
                                                     <h4 className="bg-slate-100 p-2 px-4 font-bold text-xs uppercase tracking-widest border-l-4 border-emerald-500">PENDAPATAN</h4>
                                                     <div className="text-xs space-y-2 px-4">
-                                                        <div className="flex justify-between"><span>Gaji Pokok</span><span className="font-bold">{Number(payslipUser.gajiPokok || 4000000).toLocaleString()}</span></div>
+                                                        <div className="flex justify-between"><span>Gaji Pokok</span><span className="font-bold">{gajiPokok.toLocaleString()}</span></div>
                                                         <div className="flex justify-between"><span>Lembur</span><span className="font-bold">{totalLembur.toLocaleString()}</span></div>
-                                                        <div className="flex justify-between font-bold border-t border-slate-200 pt-2 text-emerald-600"><span>TOTAL</span><span>{(Number(payslipUser.gajiPokok || 4000000) + totalLembur).toLocaleString()}</span></div>
+                                                        <div className="flex justify-between font-bold border-t border-slate-200 pt-2 text-emerald-600"><span>TOTAL</span><span>{(gajiPokok + totalLembur).toLocaleString()}</span></div>
                                                     </div>
                                                 </div>
                                                 <div className="space-y-4">
                                                     <h4 className="bg-slate-100 p-2 px-4 font-bold text-xs uppercase tracking-widest border-l-4 border-red-500">POTONGAN</h4>
                                                     <div className="text-xs space-y-2 px-4 text-red-600">
-                                                        <div className="flex justify-between"><span>Absensi ({hariAbsen} Hari)</span><span className="font-bold">{potonganAbsen.toLocaleString()}</span></div>
+                                                        <div className="flex justify-between"><span>Absensi ({hariMangkir} Hari Mangkir)</span><span className="font-bold">{potonganAbsen.toLocaleString()}</span></div>
                                                         <div className="flex justify-between"><span>Kasbon</span><span className="font-bold">{kasbon.toLocaleString()}</span></div>
                                                         <div className="flex justify-between font-bold border-t border-slate-200 pt-2 text-slate-800"><span>TOTAL POTONGAN</span><span>{(potonganAbsen + kasbon).toLocaleString()}</span></div>
                                                     </div>
                                                 </div>
                                             </div>
 
-                                            <div className="mt-6 border-4 border-red-500 p-5 inline-block font-black text-slate-800">
-                                                TOTAL GAJI DITERIMA : <span className="text-3xl ml-6">Rp {totalGaji.toLocaleString()}</span>
+                                            <div className="mt-6 border-4 border-red-500 p-5 inline-block font-black text-slate-800 uppercase italic">
+                                                TOTAL GAJI DITERIMA : <span className="text-3xl ml-6 text-red-600">Rp {totalGaji.toLocaleString()}</span>
+                                            </div>
+                                            
+                                            <div className="grid grid-cols-2 mt-8 gap-8">
+                                                {/* TABEL LEMBUR */}
+                                                <div>
+                                                    <h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Lembur :</h5>
+                                                    <table className="w-full border-collapse border border-slate-800 text-[10px]">
+                                                        <thead className="bg-slate-50 uppercase font-bold text-center">
+                                                            <tr>
+                                                                <th className="border border-slate-800 p-1">Tanggal</th>
+                                                                <th className="border border-slate-800 p-1">Uang</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {lemburList.length > 0 ? lemburList.map((h, i) => (
+                                                                <tr key={i}>
+                                                                    <td className="border border-slate-800 p-1 text-center">{h.tanggal}</td>
+                                                                    <td className="border border-slate-800 p-1 text-right">Rp {Number(h.lembur).toLocaleString()}</td>
+                                                                </tr>
+                                                            )) : <tr><td colSpan="2" className="border border-slate-800 p-1 text-center text-slate-300 italic">Tidak ada data</td></tr>}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+
+                                                {/* TABEL TELAT */}
+                                                <div>
+                                                    <h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Terlambat :</h5>
+                                                    <table className="w-full border-collapse border border-slate-800 text-[10px]">
+                                                        <thead className="bg-slate-50 uppercase font-bold text-center">
+                                                            <tr>
+                                                                <th className="border border-slate-800 p-1">Tanggal</th>
+                                                                <th className="border border-slate-800 p-1">Durasi</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {telatList.length > 0 ? telatList.map((h, i) => (
+                                                                <tr key={i}>
+                                                                    <td className="border border-slate-800 p-1 text-center">{h.tanggal}</td>
+                                                                    <td className="border border-slate-800 p-1 text-center text-red-500 font-bold">{h.telat} Menit</td>
+                                                                </tr>
+                                                            )) : <tr><td colSpan="2" className="border border-slate-800 p-1 text-center text-slate-300 italic">Tepat waktu semua</td></tr>}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+
+                                            {/* TABEL KASBON */}
+                                            <div className="mt-8">
+                                                <h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Kasbon :</h5>
+                                                <table className="w-full border-collapse border border-slate-800 text-[10px]">
+                                                    <thead className="bg-slate-50 uppercase font-bold">
+                                                        <tr>
+                                                            <th className="border border-slate-800 p-1 text-left px-4">Keterangan</th>
+                                                            <th className="border border-slate-800 p-1 text-right px-4">Nominal</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        <tr>
+                                                            <td className="border border-slate-800 p-1 px-4 italic uppercase">Potongan Kewajiban Kasbon Bulan Ini</td>
+                                                            <td className="border border-slate-800 p-1 px-4 text-right font-bold">Rp {kasbon.toLocaleString()}</td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+
+                                            <div className="mt-8 text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                                                REKENING : {meta.noRek || '-'} (BCA - {payslipUser.nama})
+                                            </div>
+                                            <div className="mt-1 text-[9px] text-slate-400 italic">
+                                                *Wajib Masuk: {hariWajibKerja} Hari. Kehadiran: {hariHadir} Hari.
                                             </div>
                                         </React.Fragment>
                                     );
                                 })()}
-
-                                <div className="mt-10">
-                                    <p className="text-[10px] font-bold mb-3 uppercase italic text-slate-400">Detail Laporan Lembur :</p>
-                                    <table className="w-full border-collapse border border-slate-800 text-[10px]">
-                                        <thead className="bg-slate-50 font-bold uppercase tracking-tighter">
-                                            <tr>
-                                                <th className="border border-slate-800 p-2 text-left">Tgl & Tugas Lembur</th>
-                                                <th className="border border-slate-800 p-2 text-center">Jam Selesai</th>
-                                                <th className="border border-slate-800 p-2 text-center font-bold">Uang Lembur</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {(payslipUser.data || history).filter(h => h.lembur > 0 && h.tipe === 'OUT').map((h, i) => (
-                                                <tr key={i}>
-                                                    <td className="border border-slate-800 p-2">{h.tanggal} - {h.tugasLembur}</td>
-                                                    <td className="border border-slate-800 p-2 text-center">{h.waktu}</td>
-                                                    <td className="border border-slate-800 p-2 text-right">Rp {Number(h.lembur).toLocaleString()}</td>
-                                                </tr>
-                                            ))}
-                                            <tr className="bg-yellow-100 font-bold">
-                                                <td colSpan="2" className="border border-slate-800 p-2 text-right">TOTAL UANG LEMBUR</td>
-                                                <td className="border border-slate-800 p-2 text-right font-bold">Rp {(payslipUser.data || history).reduce((a,c)=>a+Number(c.lembur),0).toLocaleString()}</td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
                             </div>
                         </div>
                     )}
 
-                    {/* HEADER DASHBOARD */}
-                    <div className="p-6 bg-white border-b border-slate-200 flex justify-between items-center sticky top-0 z-20">
+                    {/* DASHBOARD UI */}
+                    <div className="p-6 bg-white border-b border-slate-200 flex justify-between items-center sticky top-0 z-20 shadow-sm">
                         <div className="flex items-center gap-4">
                             <img src={LOGO_URL} className="w-12 h-12 object-contain" />
-                            <div><h2 className="font-bold text-slate-800 text-base leading-tight">{user.nama}</h2><p className="text-[10px] text-blue-600 font-bold uppercase tracking-widest">{user.role}</p></div>
+                            <div><h2 className="font-bold text-slate-800 text-base leading-tight uppercase tracking-tight">{user.nama}</h2><p className="text-[10px] text-blue-600 font-black uppercase tracking-[0.2em]">{user.role || user.jabatan}</p></div>
                         </div>
-                        <button onClick={handleLogout} className="p-3 bg-red-50 text-red-500 rounded-2xl hover:bg-red-100 transition-colors"><i data-lucide="log-out" class="w-5 h-5"></i></button>
+                        <button onClick={handleLogout} className="p-3 bg-red-50 text-red-500 rounded-2xl hover:bg-red-100 transition-colors shadow-sm"><i data-lucide="log-out" class="w-5 h-5"></i></button>
                     </div>
 
                     <div className="flex-1 p-5 space-y-6 overflow-y-auto">
                         <div className="grid grid-cols-2 gap-4">
-                            <button onClick={() => startCamera('IN')} className="bg-emerald-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-emerald-200 transition-all active:scale-95">
-                                <i data-lucide="log-in" class="w-6 h-6"></i><span className="font-bold text-xs uppercase tracking-widest">Absen Masuk</span>
-                            </button>
-                            <button onClick={() => startCamera('OUT')} className="bg-orange-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-orange-200 transition-all active:scale-95">
-                                <i data-lucide="log-out" class="w-6 h-6"></i><span className="font-bold text-xs uppercase tracking-widest">Absen Pulang</span>
-                            </button>
+                            <button onClick={() => startCamera('IN')} className="bg-emerald-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-emerald-200 transition-all active:scale-95"><i data-lucide="log-in" class="w-6 h-6"></i><span className="font-bold text-xs uppercase tracking-widest">Absen Masuk</span></button>
+                            <button onClick={() => startCamera('OUT')} className="bg-orange-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-orange-200 transition-all active:scale-95"><i data-lucide="log-out" class="w-6 h-6"></i><span className="font-bold text-xs uppercase tracking-widest">Absen Pulang</span></button>
                         </div>
 
-                        {/* PANEL ADMIN: MONITORING & KASBON */}
-                        {user.role === 'Admin' && (
-                            <div className="bg-white p-6 rounded-[2.5rem] border-2 border-blue-50 shadow-sm space-y-6 animate-in">
-                                <div className="flex justify-between items-center">
-                                    <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider flex items-center gap-2">
-                                        <i data-lucide="users" class="w-4 h-4 text-blue-600"></i> Manajemen Laporan
-                                    </h3>
-                                    <button 
-                                        onClick={() => setShowKasbonModal(true)}
-                                        className="bg-blue-600 text-white text-[10px] px-4 py-2 rounded-xl font-bold flex items-center gap-1 shadow-lg shadow-blue-200"
-                                    >
-                                        <i data-lucide="wallet" class="w-3 h-3"></i> INPUT KASBON
+                        {isAdmin && (
+                            <div className="bg-white p-6 rounded-[2.5rem] border-2 border-blue-50 shadow-sm space-y-6 animate-in fade-in">
+                                <div className="flex justify-between items-center"><h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider flex items-center gap-2 italic"><i data-lucide="layout-dashboard" class="w-4 h-4 text-blue-600"></i> Kontrol Admin</h3></div>
+                                <div className="grid grid-cols-3 gap-2">
+                                    <button onClick={() => setShowDailyReportModal(true)} className="bg-emerald-600 text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform">
+                                        <i data-lucide="file-text" class="w-5 h-5"></i>
+                                        <span className="text-[8px] uppercase">Laporan Harian</span>
+                                    </button>
+                                    <button onClick={() => setShowKasbonModal(true)} className="bg-blue-600 text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform">
+                                        <i data-lucide="wallet" class="w-5 h-5"></i>
+                                        <span className="text-[8px] uppercase">Input Kasbon</span>
+                                    </button>
+                                    <button onClick={() => setShowHolidayModal(true)} className="bg-red-500 text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform">
+                                        <i data-lucide="calendar" class="w-5 h-5"></i>
+                                        <span className="text-[8px] uppercase">Set Libur</span>
                                     </button>
                                 </div>
-                                <div className="flex gap-2">
-                                    <select 
-                                        className="text-[10px] bg-slate-50 border border-slate-200 p-2 rounded-xl outline-none font-bold flex-1"
-                                        value={selectedMonth}
-                                        onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
-                                    >
-                                        {BULAN_INDO.map((b, i) => <option key={i} value={i}>{b}</option>)}
-                                    </select>
-                                    <button onClick={fetchHistory} className="p-2 bg-slate-50 rounded-xl text-slate-400"><i data-lucide="rotate-cw" class="w-3 h-3"></i></button>
-                                </div>
-
-                                <div className="space-y-3">
-                                    {karyawanList.map((k, i) => (
-                                        <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 group transition-colors">
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center font-bold text-blue-600 uppercase">{k.nama.charAt(0)}</div>
-                                                <div>
-                                                    <h4 className="text-xs font-bold">{k.nama}</h4>
-                                                    <p className="text-[9px] text-slate-400">{k.count} Hari Hadir</p>
-                                                </div>
-                                            </div>
-                                            <button 
-                                                onClick={() => { setPayslipUser(k); setShowPayslip(true); }}
-                                                className="bg-white text-blue-600 px-4 py-2 rounded-xl text-[10px] font-bold shadow-sm"
-                                            >
-                                                KUITANSI
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* ESTIMASI GAJI PRIBADI (UNTUK STAFF) */}
-                        {user.role !== 'Admin' && (
-                            <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white space-y-6 shadow-2xl relative overflow-hidden">
-                                <div className="relative z-10">
-                                    <div className="flex justify-between items-center mb-6">
-                                        <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Estimasi Pendapatan</h4>
-                                        <button onClick={() => { setPayslipUser(user); setShowPayslip(true); }} className="text-xs bg-[#b4941f] px-5 py-2 rounded-full font-bold shadow-lg shadow-black/20 flex items-center gap-2"><i data-lucide="file-text" class="w-3 h-3"></i> SLIP GAJI</button>
+                                <div className="space-y-4 pt-4 border-t border-slate-100">
+                                    <div className="flex justify-between items-center px-1">
+                                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Monitoring Laporan</h4>
+                                        <select className="text-[10px] bg-slate-50 border border-slate-200 p-2 rounded-xl outline-none font-bold" value={selectedMonth} onChange={(e) => setSelectedMonth(parseInt(e.target.value))}>
+                                            {BULAN_INDO.map((b, i) => <option key={i} value={i}>{b}</option>)}
+                                        </select>
                                     </div>
-                                    <div className="flex justify-between items-end">
-                                        {(() => {
-                                            const stats = calculatePayslipData(user, history.filter(h => h.id === user.id));
-                                            return (
-                                                <React.Fragment>
-                                                    <div><p className="text-[10px] text-slate-400 mb-2 uppercase font-medium">Net Gaji</p><h3 className="text-3xl font-black italic tracking-tighter">Rp {stats.totalGaji.toLocaleString()}</h3></div>
-                                                    <div className="text-right border-l border-white/10 pl-4"><p className="text-[10px] text-slate-400 mb-2 uppercase font-medium tracking-wide">Total Lembur</p><p className="font-bold text-emerald-400 text-sm">+Rp {stats.totalLembur.toLocaleString()}</p></div>
-                                                </React.Fragment>
-                                            );
-                                        })()}
+                                    <div className="space-y-3">
+                                        {karyawanList.map((k, i) => (
+                                            <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-blue-300 transition-colors">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center font-bold text-blue-600 uppercase italic">{k.nama.charAt(0)}</div>
+                                                    <div><h4 className="text-xs font-bold uppercase">{k.nama}</h4><p className="text-[9px] text-slate-400 uppercase tracking-tighter">{k.role}</p></div>
+                                                </div>
+                                                <button onClick={() => { setPayslipUser(k); setShowPayslip(true); }} className="bg-white text-blue-600 px-4 py-2 rounded-xl text-[10px] font-black shadow-sm border border-slate-100 uppercase italic">Kuitansi</button>
+                                            </div>
+                                        ))}
                                     </div>
                                 </div>
                             </div>
                         )}
 
                         <div className="space-y-4">
-                            <h3 className="font-bold text-[10px] uppercase tracking-[0.3em] text-slate-400 px-2 flex items-center gap-3">
-                                <div className="w-6 h-[2px] bg-slate-300"></div> {user.role === 'Admin' ? 'Aktivitas Hari Ini' : 'Riwayat Anda'}
-                            </h3>
+                            <h3 className="font-bold text-[10px] uppercase tracking-[0.3em] text-slate-400 px-2 flex items-center gap-3 italic"><div className="w-6 h-[2px] bg-slate-300"></div> Riwayat Aktivitas</h3>
                             {history.slice(0, 10).map((item, idx) => (
-                                <div key={idx} className="bg-white p-5 rounded-[2rem] border border-slate-50 flex items-center gap-5 animate-in shadow-sm">
-                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm ${item.tipe === 'IN' ? 'bg-emerald-50 text-emerald-600' : 'bg-orange-50 text-orange-600'}`}>
-                                        <i data-lucide={item.tipe === 'IN' ? 'clock' : 'log-out'} class="w-6 h-6"></i>
-                                    </div>
+                                <div key={idx} className="bg-white p-5 rounded-[2rem] border border-slate-50 flex items-center gap-5 shadow-sm animate-in" style={{animationDelay: `${idx*0.05}s`}}>
+                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm ${item.tipe === 'IN' ? 'bg-emerald-50 text-emerald-600' : 'bg-orange-50 text-orange-600'}`}><i data-lucide={item.tipe === 'IN' ? 'clock' : 'log-out'} class="w-6 h-6"></i></div>
                                     <div className="flex-1 min-w-0">
-                                        <div className="flex justify-between items-start mb-1">
-                                            <h4 className="font-bold text-sm text-slate-800">{user.role === 'Admin' ? item.nama : item.tanggal}</h4>
-                                            <span className={`text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-tighter shadow-sm ${item.telat > 0 ? 'bg-red-500 text-white' : 'bg-blue-600 text-white'}`}>{item.status}</span>
-                                        </div>
-                                        <p className="text-[11px] text-slate-500 font-medium">{item.waktu} • {item.tipe === 'IN' ? 'Masuk' : 'Pulang'}</p>
-                                        {item.lembur > 0 && <p className="text-[10px] text-emerald-600 font-bold mt-2 bg-emerald-50 inline-block px-2 py-0.5 rounded-lg">+ Lembur: Rp {Number(item.lembur).toLocaleString()}</p>}
+                                        <div className="flex justify-between items-start mb-1"><h4 className="font-bold text-sm text-slate-800">{isAdmin ? item.nama : item.tanggal}</h4><span className={`text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-tighter shadow-sm ${item.telat > 0 ? 'bg-red-500 text-white' : 'bg-blue-600 text-white'}`}>{item.status}</span></div>
+                                        <p className="text-[11px] text-slate-500 font-bold uppercase italic">
+                                            {formatTimeDisplay(item.waktu)} • {item.tipe === 'IN' ? 'Check In' : 'Check Out'}
+                                        </p>
                                     </div>
-                                    <a href={item.foto} target="_blank" className="w-14 h-14 rounded-2xl bg-slate-100 overflow-hidden shrink-0 border border-slate-100"><img src={item.foto} className="w-full h-full object-cover" /></a>
+                                    <a href={item.foto} target="_blank" className="w-14 h-14 rounded-2xl bg-slate-100 overflow-hidden shrink-0 border border-slate-100 shadow-sm"><img src={item.foto} className="w-full h-full object-cover" /></a>
                                 </div>
                             ))}
                         </div>
