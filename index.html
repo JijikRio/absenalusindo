@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Presensi PT. AMP</title>
+    <title>Sistem Absensi PT. AMP</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -26,7 +26,7 @@
     <script type="text/babel">
         const { useState, useRef, useEffect, useMemo } = React;
 
-        const APP_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw_GPzYIlHwDIxD-t6TOoba5AGLMA-E8GzalmeibrPfaRq0S1mJACewLrV1lMG1m081/exec'; 
+        const APP_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz4IC4GrNOj6fm0o5gnslEBOPK2-HKtct4ia1d2FN2sijc4gbIOXqlZq7TOKH7AZLGK/exec'; 
         const LOGO_URL = 'https://lh3.googleusercontent.com/d/1A9rh7e8Qx6K73-7tRMUOtFul-jXaYUxs'; 
 
         const BULAN_INDO = [
@@ -43,6 +43,7 @@
             const [location, setLocation] = useState({ address: 'Mencari lokasi...', coords: null });
             const [attendanceType, setAttendanceType] = useState('IN');
             const [history, setHistory] = useState([]);
+            const [ijinList, setIjinList] = useState([]); 
             const [usersMeta, setUsersMeta] = useState({}); 
             const [holidays, setHolidays] = useState([]); 
             const [overtimeTask, setOvertimeTask] = useState('');
@@ -56,10 +57,13 @@
             const [showKasbonModal, setShowKasbonModal] = useState(false);
             const [showHolidayModal, setShowHolidayModal] = useState(false);
             const [showDailyReportModal, setShowDailyReportModal] = useState(false);
+            const [showIjinModal, setShowIjinModal] = useState(false); 
+            
             const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
 
             const [kasbonData, setKasbonData] = useState({ id: '', amount: '' });
             const [holidayInput, setHolidayInput] = useState({ date: '', info: '' });
+            const [ijinInput, setIjinInput] = useState({ id: '', date: '', type: 'Ijin Pribadi', info: '' });
 
             const videoRef = useRef(null);
             const canvasRef = useRef(null);
@@ -100,6 +104,7 @@
                             setUsersMeta(normalizedMeta);
                         }
                         if (result.holidays) setHolidays(result.holidays);
+                        if (result.ijinData) setIjinList(result.ijinData); 
                     }
                 } catch (err) { showMsg('error', 'Gagal sinkronisasi data'); }
                 setIsFetching(false);
@@ -126,6 +131,7 @@
                 setHistory([]);
                 setUsersMeta({});
                 setHolidays([]);
+                setIjinList([]);
             };
 
             const startCamera = async (type) => {
@@ -221,6 +227,25 @@
                 } catch (err) { showMsg('error', 'Terjadi gangguan koneksi'); } finally { setLoading(false); }
             };
 
+            const handleAddIjin = async () => {
+                if (!ijinInput.id || !ijinInput.date || !ijinInput.info) return showMsg('error', 'Lengkapi data ijin');
+                setLoading(true);
+                try {
+                    const res = await fetch(APP_SCRIPT_URL, {
+                        method: 'POST',
+                        body: JSON.stringify({ action: 'addIjin', ...ijinInput })
+                    });
+                    const result = await res.json();
+                    if (result.success) {
+                        showMsg('success', 'Data ijin/sakit berhasil disimpan!');
+                        setShowIjinModal(false);
+                        setIjinInput({ id: '', date: '', type: 'Ijin Pribadi', info: '' });
+                        fetchHistory();
+                    }
+                } catch (err) { showMsg('error', 'Gagal menyimpan ijin'); }
+                setLoading(false);
+            };
+
             const exportPayslip = () => {
                 html2canvas(payslipRef.current, { scale: 2 }).then(canvas => {
                     const link = document.createElement('a');
@@ -240,9 +265,12 @@
                 });
             };
 
+            // PERBAIKAN LOGIKA JAM CERDAS (Menangani "Sat D" dan format titik/titik dua)
             const formatTimeDisplay = (timeStr) => {
                 if (!timeStr) return '-';
-                const str = String(timeStr);
+                let str = String(timeStr).trim();
+                
+                // 1. Tangani format ISO (T)
                 if (str.includes('T')) {
                     const timePart = str.split('T')[1];
                     let hh = parseInt(timePart.substring(0, 2));
@@ -250,13 +278,33 @@
                     if (str.includes('1899')) hh = (hh + 7) % 24; 
                     return `${String(hh).padStart(2, '0')}:${mm}`;
                 }
-                if (str.includes(':') || str.includes('.')) {
-                    const parts = str.replace('.', ':').split(':');
-                    if (parts.length >= 2) {
-                        return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}`;
-                    }
+
+                // 2. Cari pola jam HH:mm atau HH.mm di dalam teks apa pun
+                const timeRegex = /(\d{1,2})[:.](\d{2})/;
+                const match = str.match(timeRegex);
+                if (match) {
+                    return `${match[1].padStart(2, '0')}:${match[2]}`;
                 }
+
+                // 3. Jika sudah telanjur terpotong menjadi "Sat D" dari backend lama
+                if (str.toLowerCase().startsWith('sat') || str.toLowerCase().startsWith('sun')) return '-';
+
                 return str;
+            };
+
+            const normalizeDateStr = (dateInput) => {
+                if (!dateInput) return "";
+                let d, m, y;
+                const str = String(dateInput);
+                if (str.includes('/')) {
+                    [d, m, y] = str.split('/');
+                    if (y && y.length === 2) y = "20" + y;
+                } else if (str.includes('-')) {
+                    const parts = str.split('T')[0].split('-');
+                    if (parts[0].length === 4) [y, m, d] = parts;
+                    else [d, m, y] = parts;
+                } else return str;
+                return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
             };
 
             const filteredHistory = useMemo(() => {
@@ -276,15 +324,10 @@
                     let statusDisplay = '-';
                     const lemburVal = outRecord ? parseFloat(String(outRecord.lembur).replace(/[^0-9.-]+/g,"")) || 0 : 0;
                     
-                    if (lemburVal > 0) {
-                        statusDisplay = 'Lembur';
-                    } else if (inRecord) {
-                        statusDisplay = inRecord.status;
-                    } else if (outRecord) {
-                        statusDisplay = 'Tanpa IN';
-                    } else {
-                        statusDisplay = 'Mangkir/Libur';
-                    }
+                    if (lemburVal > 0) statusDisplay = 'Lembur';
+                    else if (inRecord) statusDisplay = inRecord.status;
+                    else if (outRecord) statusDisplay = 'Tanpa IN';
+                    else statusDisplay = 'Mangkir/Libur';
 
                     return {
                         nama: emp.nama,
@@ -332,42 +375,64 @@
                 const limitDay = (selectedMonth === now.getMonth() && selectedYear === now.getFullYear()) ? now.getDate() : daysInMonth;
 
                 let hariMangkir = 0;
+                let totalDendaIjin = 0;
                 let hariWajibKerjaBulanIni = 0;
+                const rincianIjinSakit = [];
                 const setAbsen = new Set(userHistory.filter(h => h.tipe === 'IN').map(h => h.tanggal));
                 
-                const normalizeDateStr = (dateInput) => {
-                    if (!dateInput) return "";
-                    let d, m, y;
-                    const str = String(dateInput);
-                    if (str.includes('/')) {
-                        [d, m, y] = str.split('/');
-                        if (y && y.length === 2) y = "20" + y;
-                    } else if (str.includes('-')) {
-                        const parts = str.split('T')[0].split('-');
-                        [y, m, d] = parts;
-                    } else return str;
-                    return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
-                };
+                const currentMonthIjin = ijinList.filter(ij => {
+                    const [d, m, y] = normalizeDateStr(ij.TanggalIjin).split('/');
+                    return parseInt(m) === (selectedMonth + 1) && parseInt(y) === selectedYear && String(ij.IDKaryawan).trim().toLowerCase() === cleanId;
+                });
 
                 for (let d = 1; d <= daysInMonth; d++) {
                     const dateObj = new Date(selectedYear, selectedMonth, d);
                     const currentLoopDateStr = `${String(d).padStart(2, '0')}/${String(selectedMonth + 1).padStart(2, '0')}/${selectedYear}`;
                     const isSunday = dateObj.getDay() === 0;
                     const isHoliday = holidays.some(h => normalizeDateStr(h.date) === currentLoopDateStr);
+                    
                     if (!isSunday && !isHoliday) {
                         hariWajibKerjaBulanIni++;
-                        if (d <= limitDay && !setAbsen.has(currentLoopDateStr)) hariMangkir++;
+                        const ijinHariIni = currentMonthIjin.find(ij => normalizeDateStr(ij.TanggalIjin) === currentLoopDateStr);
+                        const recordIN = userHistory.find(h => h.tanggal === currentLoopDateStr && h.tipe === 'IN');
+
+                        if (ijinHariIni) {
+                            if (ijinHariIni.JenisIjin === 'Ijin Pribadi') {
+                                if (recordIN) {
+                                    const jamStr = formatTimeDisplay(recordIN.waktu);
+                                    const jamMatch = jamStr.match(/^(\d{1,2})/);
+                                    const jam = jamMatch ? parseInt(jamMatch[1]) : 0;
+                                    let denda = 0;
+                                    if (jam >= 11) denda = 120000;
+                                    else if (jam >= 10) denda = 90000;
+                                    else if (jam >= 9) denda = 60000;
+                                    else if (jam >= 8) denda = 30000;
+                                    totalDendaIjin += denda;
+                                    rincianIjinSakit.push({ tgl: currentLoopDateStr, ket: `Ijin Pribadi (Masuk ${jamStr})`, denda: denda });
+                                } else if (d <= limitDay) {
+                                    hariMangkir++; 
+                                }
+                            } else if (ijinHariIni.JenisIjin === 'Sakit (Sah)' || ijinHariIni.JenisIjin === 'Sakit Berat') {
+                                rincianIjinSakit.push({ tgl: currentLoopDateStr, ket: ijinHariIni.JenisIjin, denda: 0 });
+                            } else if (ijinHariIni.JenisIjin === 'Sakit (Potong Gaji)') {
+                                hariMangkir++;
+                                rincianIjinSakit.push({ tgl: currentLoopDateStr, ket: 'Sakit (Tanpa Surat)', denda: 'Potong Harian' });
+                            }
+                        } else {
+                            if (d <= limitDay && !setAbsen.has(currentLoopDateStr)) {
+                                hariMangkir++;
+                            }
+                        }
                     }
                 }
 
                 const gajiPokok = Number(meta.gajiPokok || 4000000);
                 const gajiPerHari = Math.round(gajiPokok / 26);
-                const potonganAbsen = gajiPerHari * hariMangkir;
+                const potonganAbsen = (gajiPerHari * hariMangkir) + totalDendaIjin;
                 const kasbon = parseFloat(String(meta.kasbon || 0).replace(/[^0-9.-]+/g,"")) || 0;
                 const totalGaji = gajiPokok + totalLembur - potonganAbsen - kasbon;
-                const hariHadir = setAbsen.size;
 
-                return { totalLembur, hariHadir, hariMangkir, potonganAbsen, kasbon, totalGaji, meta, hariWajibKerja: hariWajibKerjaBulanIni, gajiPokok, userHistory };
+                return { totalLembur, hariHadir: setAbsen.size, hariMangkir, totalDendaIjin, potonganAbsen, kasbon, totalGaji, meta, hariWajibKerja: hariWajibKerjaBulanIni, gajiPokok, userHistory, rincianIjinSakit };
             };
 
             if (view === 'login') {
@@ -381,6 +446,7 @@
                                     </div>
                                 </div>
                                 <h1 className="text-xl font-bold tracking-tight leading-none uppercase">PT. ALUSINDO MITRA PROPERTI</h1>
+                                <h1 className="text-s font tracking-tight leading-none uppercase">HEAD OFFICE ABSENSI</h1>
                             </div>
                             <form onSubmit={handleLogin} className="space-y-4">
                                 <input name="id" placeholder="ID Karyawan" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500" required />
@@ -399,18 +465,54 @@
                 <div className="min-h-screen max-lg mx-auto bg-[#f8fafc] flex flex-col shadow-2xl relative">
                     {isFetching && (
                         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/40 backdrop-blur-sm text-center">
-                            <div className="bg-white p-8 rounded-3xl flex flex-col items-center gap-4 shadow-xl text-center">
+                            <div className="bg-white p-8 rounded-3xl flex flex-col items-center gap-4 shadow-xl">
                                 <div className="spinner"></div>
-                                <p className="font-bold text-slate-800 text-sm tracking-widest uppercase italic">Sinkronisasi Data...</p>
+                                <p className="font-bold text-slate-800 text-sm tracking-widest uppercase italic text-center">Sinkronisasi Data...</p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODAL INPUT IJIN / SAKIT */}
+                    {showIjinModal && (
+                        <div className="fixed inset-0 z-[130] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm animate-in fade-in">
+                            <div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-6 shadow-2xl text-slate-800">
+                                <div className="text-center">
+                                    <h3 className="font-bold text-lg uppercase tracking-wide">Input Ijin / Sakit</h3>
+                                    <p className="text-[10px] text-slate-400 mt-1 uppercase">Otorisasi Absensi Karyawan</p>
+                                </div>
+                                <div className="space-y-4">
+                                    <select className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-purple-500 text-sm font-bold" onChange={(e) => setIjinInput({...ijinInput, id: e.target.value})}>
+                                        <option value="">-- Pilih Karyawan --</option>
+                                        {Object.values(usersMeta).map(k => <option key={k.id} value={k.id}>{k.nama}</option>)}
+                                    </select>
+                                    <input type="date" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-purple-500 text-sm font-bold uppercase" 
+                                        onChange={(e) => { 
+                                            const d = new Date(e.target.value); 
+                                            if(e.target.value) setIjinInput({...ijinInput, date: `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`}); 
+                                        }} 
+                                    />
+                                    <select className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-purple-500 text-sm font-bold" value={ijinInput.type} onChange={(e) => setIjinInput({...ijinInput, type: e.target.value})}>
+                                        <option value="Ijin Pribadi">Ijin Pribadi (Potong Berjenjang)</option>
+                                        <option value="Dinas Proyek">Dinas Proyek (Beda Lokasi)</option>
+                                        <option value="Sakit (Sah)">Sakit (Ada Surat Dokter)</option>
+                                        <option value="Sakit (Potong Gaji)">Sakit (Tanpa Surat)</option>
+                                        <option value="Sakit Berat">Sakit Berat (Opname/Kecelakaan)</option>
+                                    </select>
+                                    <input type="text" placeholder="Keterangan / Alasan" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-purple-500 text-sm font-bold" value={ijinInput.info} onChange={(e) => setIjinInput({...ijinInput, info: e.target.value})} />
+                                </div>
+                                <div className="flex gap-3">
+                                    <button onClick={() => setShowIjinModal(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-400 uppercase text-xs">Batal</button>
+                                    <button onClick={handleAddIjin} disabled={loading} className="flex-1 bg-purple-600 text-white py-4 rounded-2xl font-bold shadow-lg uppercase text-xs">Simpan Ijin</button>
+                                </div>
                             </div>
                         </div>
                     )}
 
                     {/* MODAL KASBON */}
                     {showKasbonModal && (
-                        <div className="fixed inset-0 z-[130] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm animate-in fade-in">
+                        <div className="fixed inset-0 z-[130] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm animate-in fade-in text-slate-800 text-center">
                             <div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-6 shadow-2xl">
-                                <div className="text-center"><h3 className="font-bold text-lg text-slate-800 uppercase tracking-wide">Input Kasbon</h3></div>
+                                <div className="text-center"><h3 className="font-bold text-lg uppercase tracking-wide">Input Kasbon</h3></div>
                                 <div className="space-y-4">
                                     <select className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold" onChange={(e) => setKasbonData({...kasbonData, id: e.target.value})}>
                                         <option value="">-- Pilih Karyawan --</option>
@@ -419,8 +521,8 @@
                                     <input type="number" placeholder="Nominal Rp" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold" value={kasbonData.amount} onChange={(e) => setKasbonData({...kasbonData, amount: e.target.value})}/>
                                 </div>
                                 <div className="flex gap-3">
-                                    <button onClick={() => setShowKasbonModal(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-400">Batal</button>
-                                    <button onClick={handleUpdateKasbon} disabled={loading} className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-bold shadow-lg">Simpan</button>
+                                    <button onClick={() => setShowKasbonModal(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-400 uppercase text-xs">Batal</button>
+                                    <button onClick={handleUpdateKasbon} disabled={loading} className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-bold shadow-lg uppercase text-xs">Simpan</button>
                                 </div>
                             </div>
                         </div>
@@ -428,24 +530,16 @@
 
                     {/* MODAL SET LIBUR */}
                     {showHolidayModal && (
-                        <div className="fixed inset-0 z-[130] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm animate-in fade-in">
+                        <div className="fixed inset-0 z-[130] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm animate-in fade-in text-slate-800 text-center">
                             <div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-6 shadow-2xl">
-                                <div className="text-center">
-                                    <h3 className="font-bold text-lg text-slate-800 uppercase tracking-wide">Set Hari Libur</h3>
-                                    <p className="text-xs text-slate-400 mt-1">Karyawan tidak dipotong gaji hari ini</p>
-                                </div>
+                                <div className="text-center"><h3 className="font-bold text-lg uppercase tracking-wide">Set Hari Libur</h3><p className="text-xs text-slate-400 mt-1">Gaji tidak dipotong hari ini</p></div>
                                 <div className="space-y-4">
-                                    <input type="date" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-red-500 text-sm font-bold uppercase" 
-                                        onChange={(e) => { 
-                                            const d = new Date(e.target.value); 
-                                            if(e.target.value) setHolidayInput({...holidayInput, date: `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`}); 
-                                        }} 
-                                    />
+                                    <input type="date" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-red-500 text-sm font-bold uppercase" onChange={(e) => { const d = new Date(e.target.value); if(e.target.value) setHolidayInput({...holidayInput, date: `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`}); }} />
                                     <input type="text" placeholder="Keterangan Libur" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-red-500 text-sm font-bold" value={holidayInput.info} onChange={(e) => setHolidayInput({...holidayInput, info: e.target.value})} />
                                 </div>
                                 <div className="flex gap-3">
-                                    <button onClick={() => setShowHolidayModal(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-400">Batal</button>
-                                    <button onClick={handleAddHoliday} disabled={loading} className="flex-1 bg-red-500 text-white py-4 rounded-2xl font-bold shadow-lg">Simpan</button>
+                                    <button onClick={() => setShowHolidayModal(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-400 uppercase text-xs">Batal</button>
+                                    <button onClick={handleAddHoliday} disabled={loading} className="flex-1 bg-red-500 text-white py-4 rounded-2xl font-bold shadow-lg uppercase text-xs">Simpan</button>
                                 </div>
                             </div>
                         </div>
@@ -470,7 +564,7 @@
                                     </div>
                                     <div className="text-right"><h1 className="text-xl font-black text-emerald-600 italic uppercase">{dailyData.date}</h1></div>
                                 </div>
-                                <table className="w-full border-collapse border border-slate-800 text-[10px]">
+                                <table className="w-full border-collapse border border-slate-800 text-[10px] text-slate-800">
                                     <thead className="bg-slate-100 uppercase font-bold text-center">
                                         <tr><th className="border border-slate-800 p-2">Nama</th><th className="border border-slate-800 p-2">Jabatan</th><th className="border border-slate-800 p-2">Masuk</th><th className="border border-slate-800 p-2">Pulang</th><th className="border border-slate-800 p-2">Status</th></tr>
                                     </thead>
@@ -490,7 +584,7 @@
                         </div>
                     )}
 
-                    {/* VIEW SLIP GAJI */}
+                    {/* SLIP GAJI */}
                     {showPayslip && payslipUser && (
                         <div className="fixed inset-0 z-[116] bg-slate-900/95 flex flex-col items-center p-4 overflow-y-auto pt-10 animate-in fade-in no-print text-slate-800">
                             <div className="w-full max-w-4xl flex justify-between mb-6 px-4">
@@ -506,7 +600,7 @@
                                     <div className="text-right"><h1 className="text-4xl font-black text-slate-800 tracking-tighter uppercase italic">SLIP GAJI</h1></div>
                                 </div>
                                 {(() => {
-                                    const { totalLembur, hariHadir, hariMangkir, potonganAbsen, kasbon, totalGaji, meta, hariWajibKerja, gajiPokok, userHistory } = calculatePayslipData(payslipUser, payslipUser.data || filteredHistory.filter(h => h.id === payslipUser.id));
+                                    const { totalLembur, hariHadir, hariMangkir, potonganAbsen, kasbon, totalGaji, meta, hariWajibKerja, gajiPokok, userHistory, rincianIjinSakit } = calculatePayslipData(payslipUser, payslipUser.data || filteredHistory.filter(h => h.id === payslipUser.id));
                                     const lemburList = userHistory.filter(h => { const val = parseFloat(String(h.lembur).replace(/[^0-9.-]+/g,"")) || 0; return val > 0 && h.tipe === 'OUT'; });
                                     const telatList = userHistory.filter(h => h.tipe === 'IN' && Number(h.telat) > 0);
                                     return (
@@ -528,7 +622,7 @@
                                                 <div className="space-y-4">
                                                     <h4 className="bg-slate-100 p-2 px-4 font-bold text-xs uppercase tracking-widest border-l-4 border-red-500">POTONGAN</h4>
                                                     <div className="text-xs space-y-2 px-4 text-red-600">
-                                                        <div className="flex justify-between"><span>Absensi ({hariMangkir} Hari Mangkir)</span><span className="font-bold">{potonganAbsen.toLocaleString()}</span></div>
+                                                        <div className="flex justify-between"><span>Absensi (Potongan & Mangkir)</span><span className="font-bold">{potonganAbsen.toLocaleString()}</span></div>
                                                         <div className="flex justify-between"><span>Kasbon</span><span className="font-bold text-red-700">{kasbon.toLocaleString()}</span></div>
                                                         <div className="flex justify-between font-bold border-t border-slate-200 pt-2 text-slate-800"><span>TOTAL POTONGAN</span><span>{(potonganAbsen + kasbon).toLocaleString()}</span></div>
                                                     </div>
@@ -536,47 +630,38 @@
                                             </div>
                                             <div className="mt-6 border-4 border-red-500 p-5 inline-block font-black text-slate-800 uppercase italic">TOTAL GAJI DITERIMA : <span className="text-3xl ml-6 text-red-600">Rp {totalGaji.toLocaleString()}</span></div>
                                             
-                                            {/* TABEL RINCIAN LEMBUR */}
-                                            <div className="mt-10"><h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Lembur :</h5>
-                                                <table className="w-full border-collapse border border-slate-800 text-[10px]">
-                                                    <thead className="bg-slate-50 uppercase font-bold text-center"><tr><th className="border border-slate-800 p-2">Tanggal</th><th className="border border-slate-800 p-2 text-left">Tugas Lembur</th><th className="border border-slate-800 p-2">Jam</th><th className="border border-slate-800 p-2">Uang</th></tr></thead>
-                                                    <tbody>{lemburList.length > 0 ? lemburList.map((h, i) => (<tr key={i}><td className="border border-slate-800 p-2 text-center">{h.tanggal}</td><td className="border border-slate-800 p-2 uppercase italic">{h.tugasLembur || '-'}</td><td className="border border-slate-800 p-2 text-center">{formatTimeDisplay(h.waktu)}</td><td className="border border-slate-800 p-2 text-right font-bold">Rp {parseFloat(String(h.lembur).replace(/[^0-9.-]+/g,"")).toLocaleString()}</td></tr>)) : <tr><td colSpan="4" className="border border-slate-800 p-2 text-center text-slate-300 italic">Tidak ada data lembur</td></tr>}</tbody>
-                                                </table>
+                                            <div className="grid grid-cols-2 mt-10 gap-6">
+                                                <div><h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Lembur :</h5>
+                                                    <table className="w-full border-collapse border border-slate-800 text-[10px] text-slate-800">
+                                                        <thead className="bg-slate-50 uppercase font-bold text-center"><tr><th className="border border-slate-800 p-2">Tgl</th><th className="border border-slate-800 p-2 text-left">Tugas</th><th className="border border-slate-800 p-2">Nominal</th></tr></thead>
+                                                        <tbody>{lemburList.length > 0 ? lemburList.map((h, i) => (<tr key={i}><td className="border border-slate-800 p-2 text-center">{h.tanggal}</td><td className="border border-slate-800 p-2 uppercase italic">{h.tugasLembur || '-'}</td><td className="border border-slate-800 p-2 text-right font-bold">Rp {parseFloat(String(h.lembur).replace(/[^0-9.-]+/g,"")).toLocaleString()}</td></tr>)) : <tr><td colSpan="3" className="border border-slate-800 p-2 text-center text-slate-300 italic">Tidak ada lembur</td></tr>}</tbody>
+                                                    </table>
+                                                </div>
+                                                <div><h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Ijin & Sakit :</h5>
+                                                    <table className="w-full border-collapse border border-slate-800 text-[10px] text-slate-800">
+                                                        <thead className="bg-slate-50 uppercase font-bold text-center"><tr><th className="border border-slate-800 p-2">Tgl</th><th className="border border-slate-800 p-2 text-left">Ket</th><th className="border border-slate-800 p-2">Pot/m</th></tr></thead>
+                                                        <tbody>{rincianIjinSakit.length > 0 ? rincianIjinSakit.map((h, i) => (<tr key={i}><td className="border border-slate-800 p-2 text-center">{h.tgl}</td><td className="border border-slate-800 p-2 uppercase italic">{h.ket}</td><td className="border border-slate-800 p-2 text-right text-red-600 font-bold">{h.denda === 0 ? 'Free' : (typeof h.denda === 'string' ? h.denda : 'Rp ' + h.denda.toLocaleString())}</td></tr>)) : <tr><td colSpan="3" className="border border-slate-800 p-2 text-center text-slate-300 italic uppercase">Bersih</td></tr>}</tbody>
+                                                    </table>
+                                                </div>
                                             </div>
 
-                                            {/* TABEL RINCIAN KASBON */}
-                                            <div className="mt-6"><h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Kasbon :</h5>
-                                                <table className="w-full border-collapse border border-slate-800 text-[10px]">
-                                                    <thead className="bg-slate-50 uppercase font-bold"><tr><th className="border border-slate-800 p-2 text-left px-4">Keterangan</th><th className="border border-slate-800 p-2 text-right px-4">Nominal</th></tr></thead>
-                                                    <tbody>{kasbon > 0 ? (<tr><td className="border border-slate-800 p-2 px-4 italic uppercase">Potongan Kewajiban Kasbon Bulan Berjalan</td><td className="border border-slate-800 p-2 px-4 text-right font-black text-red-600">Rp {kasbon.toLocaleString()}</td></tr>) : (<tr><td colSpan="2" className="border border-slate-800 p-2 text-center text-slate-300 italic uppercase">Karyawan tidak memiliki riwayat kasbon</td></tr>)}</tbody>
-                                                </table>
-                                            </div>
-
-                                            {/* --- INI TABEL TELAT YANG TIMBUL LAGI --- */}
-                                            <div className="mt-6">
-                                                <h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Terlambat :</h5>
-                                                <table className="w-full border-collapse border border-slate-800 text-[10px]">
-                                                    <thead className="bg-slate-50 uppercase font-bold text-center">
-                                                        <tr>
-                                                            <th className="border border-slate-800 p-2">Tanggal</th>
-                                                            <th className="border border-slate-800 p-2">Jam Masuk</th>
-                                                            <th className="border border-slate-800 p-2">Durasi Telat</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        {telatList.length > 0 ? telatList.map((h, i) => (
-                                                            <tr key={i}>
-                                                                <td className="border border-slate-800 p-2 text-center">{h.tanggal}</td>
-                                                                <td className="border border-slate-800 p-2 text-center">{formatTimeDisplay(h.waktu)}</td>
-                                                                <td className="border border-slate-800 p-2 text-center text-red-500 font-black">{h.telat} Menit</td>
-                                                            </tr>
-                                                        )) : <tr><td colSpan="3" className="border border-slate-800 p-2 text-center text-slate-300 italic uppercase">Karyawan Tepat Waktu Seluruhnya</td></tr>}
-                                                    </tbody>
-                                                </table>
+                                            <div className="grid grid-cols-2 mt-6 gap-6">
+                                                <div><h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Kasbon :</h5>
+                                                    <table className="w-full border-collapse border border-slate-800 text-[10px] text-slate-800">
+                                                        <thead className="bg-slate-50 uppercase font-bold"><tr><th className="border border-slate-800 p-2 text-left px-4">Keterangan</th><th className="border border-slate-800 p-2 text-right px-4">Nominal</th></tr></thead>
+                                                        <tbody>{kasbon > 0 ? (<tr><td className="border border-slate-800 p-2 px-4 italic uppercase">Potongan Kasbon Bulan Berjalan</td><td className="border border-slate-800 p-2 px-4 text-right font-black text-red-600">Rp {kasbon.toLocaleString()}</td></tr>) : (<tr><td colSpan="2" className="border border-slate-800 p-2 text-center text-slate-300 italic uppercase">Tanpa riwayat kasbon</td></tr>)}</tbody>
+                                                    </table>
+                                                </div>
+                                                <div><h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Terlambat :</h5>
+                                                    <table className="w-full border-collapse border border-slate-800 text-[10px] text-slate-800">
+                                                        <thead className="bg-slate-50 uppercase font-bold text-center"><tr><th className="border border-slate-800 p-2">Tgl</th><th className="border border-slate-800 p-2">Jam</th><th className="border border-slate-800 p-2">Durasi</th></tr></thead>
+                                                        <tbody>{telatList.length > 0 ? telatList.map((h, i) => (<tr key={i}><td className="border border-slate-800 p-2 text-center">{h.tanggal}</td><td className="border border-slate-800 p-2 text-center">{formatTimeDisplay(h.waktu)}</td><td className="border border-slate-800 p-2 text-center text-red-500 font-black">{h.telat} Menit</td></tr>)) : <tr><td colSpan="3" className="border border-slate-800 p-2 text-center text-slate-300 italic uppercase">Tepat Waktu Seluruhnya</td></tr>}</tbody>
+                                                    </table>
+                                                </div>
                                             </div>
 
                                             <div className="mt-8 text-[11px] font-bold text-slate-500 uppercase tracking-wide">REKENING : {meta.noRek || '-'} (BCA - {payslipUser.nama})</div>
-                                            <div className="mt-1 text-[9px] text-slate-400 italic">*Wajib Masuk: {hariWajibKerja} Hari. Kehadiran: {hariHadir} Hari.</div>
+                                            <div className="mt-1 text-[9px] text-slate-400 italic">*Wajib Masuk: {hariWajibKerja} Hari. Kehadiran: {hariHadir} Hari. {hariMangkir > 0 ? `Mangkir: ${hariMangkir} Hari.` : ''}</div>
                                         </React.Fragment>
                                     );
                                 })()}
@@ -584,27 +669,29 @@
                         </div>
                     )}
 
-                    <div className="p-6 bg-white border-b border-slate-200 flex justify-between items-center sticky top-0 z-20 shadow-sm">
+                    {/* HEADER DASHBOARD */}
+                    <div className="p-6 bg-white border-b border-slate-200 flex justify-between items-center sticky top-0 z-20 shadow-sm text-slate-800">
                         <div className="flex items-center gap-4">
                             <img src={LOGO_URL} className="w-12 h-12 object-contain" />
-                            <div><h2 className="font-bold text-slate-800 text-base leading-tight uppercase tracking-tight">{user.nama}</h2><p className="text-[10px] text-blue-600 font-black uppercase tracking-[0.2em]">{user.role || user.jabatan}</p></div>
+                            <div><h2 className="font-bold text-base leading-tight uppercase tracking-tight">{user.nama}</h2><p className="text-[10px] text-blue-600 font-black uppercase tracking-[0.2em]">{user.role || user.jabatan}</p></div>
                         </div>
                         <button onClick={handleLogout} className="p-3 bg-red-50 text-red-500 rounded-2xl hover:bg-red-100 transition-colors shadow-sm"><i data-lucide="log-out" class="w-5 h-5"></i></button>
                     </div>
 
                     <div className="flex-1 p-5 space-y-6 overflow-y-auto">
                         <div className="grid grid-cols-2 gap-4">
-                            <button onClick={() => startCamera('IN')} className="bg-emerald-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-emerald-200 transition-all active:scale-95"><i data-lucide="log-in" class="w-6 h-6"></i><span className="font-bold text-xs uppercase tracking-widest">Absen Masuk</span></button>
-                            <button onClick={() => startCamera('OUT')} className="bg-orange-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-orange-200 transition-all active:scale-95"><i data-lucide="log-out" class="w-6 h-6"></i><span className="font-bold text-xs uppercase tracking-widest">Absen Pulang</span></button>
+                            <button onClick={() => startCamera('IN')} className="bg-emerald-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-emerald-200 active:scale-95 transition-all"><i data-lucide="log-in" class="w-6 h-6"></i><span className="font-bold text-xs uppercase tracking-widest">Absen Masuk</span></button>
+                            <button onClick={() => startCamera('OUT')} className="bg-orange-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-orange-200 active:scale-95 transition-all"><i data-lucide="log-out" class="w-6 h-6"></i><span className="font-bold text-xs uppercase tracking-widest">Absen Pulang</span></button>
                         </div>
 
                         {isAdmin && (
-                            <div className="bg-white p-6 rounded-[2.5rem] border-2 border-blue-50 shadow-sm space-y-6 animate-in fade-in">
-                                <div className="flex justify-between items-center"><h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider flex items-center gap-2 italic text-slate-800"><i data-lucide="layout-dashboard" class="w-4 h-4 text-blue-600"></i> Kontrol Admin</h3></div>
-                                <div className="grid grid-cols-3 gap-2 text-center">
+                            <div className="bg-white p-6 rounded-[2.5rem] border-2 border-blue-50 shadow-sm space-y-6 animate-in fade-in text-slate-800">
+                                <div className="flex justify-between items-center"><h3 className="font-bold text-sm uppercase tracking-wider flex items-center gap-2 italic"><i data-lucide="layout-dashboard" class="w-4 h-4 text-blue-600"></i> Kontrol Admin</h3></div>
+                                <div className="grid grid-cols-2 gap-3 text-center">
                                     <button onClick={() => setShowDailyReportModal(true)} className="bg-emerald-600 text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform"><i data-lucide="file-text" class="w-5 h-5"></i><span className="text-[8px] uppercase">Laporan Harian</span></button>
+                                    <button onClick={() => setShowIjinModal(true)} className="bg-purple-600 text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform"><i data-lucide="clipboard-list" class="w-5 h-5"></i><span className="text-[8px] uppercase">Manajemen Ijin</span></button>
                                     <button onClick={() => setShowKasbonModal(true)} className="bg-blue-600 text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform"><i data-lucide="wallet" class="w-5 h-5"></i><span className="text-[8px] uppercase">Input Kasbon</span></button>
-                                    <button onClick={() => setShowHolidayModal(true)} className="bg-red-500 text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform"><i data-lucide="calendar" class="w-5 h-5"></i><span className="text-[9px] uppercase tracking-tighter text-center">Set Libur</span></button>
+                                    <button onClick={() => setShowHolidayModal(true)} className="bg-red-500 text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform"><i data-lucide="calendar" class="w-5 h-5"></i><span className="text-[8px] uppercase tracking-tighter">Set Libur</span></button>
                                 </div>
                                 <div className="space-y-4 pt-4 border-t border-slate-100">
                                     <div className="flex justify-between items-center px-1">
@@ -628,13 +715,13 @@
                             </div>
                         )}
 
-                        <div className="space-y-4">
+                        <div className="space-y-4 text-slate-800">
                             <h3 className="font-bold text-[10px] uppercase tracking-[0.3em] text-slate-400 px-2 flex items-center gap-3 italic"><div className="w-6 h-[2px] bg-slate-300"></div> Riwayat Aktivitas</h3>
                             {history.slice(0, 10).map((item, idx) => (
                                 <div key={idx} className="bg-white p-5 rounded-[2rem] border border-slate-50 flex items-center gap-5 shadow-sm animate-in" style={{animationDelay: `${idx*0.05}s`}}>
                                     <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm ${item.tipe === 'IN' ? 'bg-emerald-50 text-emerald-600' : 'bg-orange-50 text-orange-600'}`}><i data-lucide={item.tipe === 'IN' ? 'clock' : 'log-out'} class="w-6 h-6"></i></div>
                                     <div className="flex-1 min-w-0">
-                                        <div className="flex justify-between items-start mb-1"><h4 className="font-bold text-sm text-slate-800 uppercase tracking-tighter">{isAdmin ? item.nama : item.tanggal}</h4><span className={`text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-tighter shadow-sm ${item.telat > 0 ? 'bg-red-500 text-white' : 'bg-blue-600 text-white'}`}>{item.status}</span></div>
+                                        <div className="flex justify-between items-start mb-1"><h4 className="font-bold text-sm">{isAdmin ? item.nama : item.tanggal}</h4><span className={`text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-tighter shadow-sm ${item.telat > 0 ? 'bg-red-500 text-white' : 'bg-blue-600 text-white'}`}>{item.status}</span></div>
                                         <p className="text-[11px] text-slate-500 font-bold uppercase italic">{formatTimeDisplay(item.waktu)} • {item.tipe === 'IN' ? 'Check In' : 'Check Out'}</p>
                                     </div>
                                     <a href={item.foto} target="_blank" className="w-14 h-14 rounded-2xl bg-slate-100 overflow-hidden shrink-0 border border-slate-100 shadow-sm"><img src={item.foto} className="w-full h-full object-cover" /></a>
@@ -643,7 +730,7 @@
                         </div>
                     </div>
 
-                    {/* MODAL KAMERA VIEW */}
+                    {/* KAMERA */}
                     {view === 'camera' && (
                         <div className="fixed inset-0 z-[110] bg-black flex flex-col animate-in fade-in">
                             <video ref={videoRef} autoPlay playsInline className="w-full flex-1 object-cover scale-x-[-1]" />
@@ -666,7 +753,7 @@
                         </div>
                     )}
 
-                    {/* MODAL TUGAS LEMBUR */}
+                    {/* MODAL OT */}
                     {showOTModal && (
                         <div className="fixed inset-0 z-[115] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm text-slate-800">
                             <div className="bg-white w-full rounded-[2.5rem] p-8 space-y-6 shadow-2xl animate-in">
