@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistem Absensi PT. AMP</title>
+    <title>Presensi PT. AMP</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -56,7 +56,6 @@
             const [showKasbonModal, setShowKasbonModal] = useState(false);
             const [showHolidayModal, setShowHolidayModal] = useState(false);
             
-            // New state for Daily Report
             const [showDailyReportModal, setShowDailyReportModal] = useState(false);
             const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
 
@@ -103,8 +102,11 @@
                         }
                         if (result.holidays) setHolidays(result.holidays);
                     }
-                } catch (err) { showMsg('error', 'Gagal sinkronisasi data'); }
-                setIsFetching(false);
+                } catch (err) { 
+                    showMsg('error', 'Gagal sinkronisasi data'); 
+                } finally {
+                    setIsFetching(false);
+                }
             };
 
             const handleLogin = async (e) => {
@@ -116,10 +118,17 @@
                         body: JSON.stringify({ action: 'login', id: e.target.id.value, password: e.target.password.value })
                     });
                     const data = await res.json();
-                    if (data.success) { setUser(data.user); setView('dashboard'); }
-                    else showMsg('error', data.message);
-                } catch (err) { showMsg('error', 'Koneksi error'); }
-                setLoading(false);
+                    if (data.success) { 
+                        setUser(data.user); 
+                        setView('dashboard'); 
+                    } else {
+                        showMsg('error', data.message);
+                    }
+                } catch (err) { 
+                    showMsg('error', 'Koneksi error'); 
+                } finally {
+                    setLoading(false);
+                }
             };
 
             const handleLogout = () => {
@@ -139,7 +148,9 @@
                             const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`);
                             const data = await res.json();
                             setLocation({ address: data.display_name });
-                        } catch (e) { setLocation({ address: "Lokasi tidak terdeteksi" }); }
+                        } catch (e) { 
+                            setLocation({ address: "Lokasi tidak terdeteksi" }); 
+                        }
                     });
                 }
                 setTimeout(async () => {
@@ -147,7 +158,7 @@
                         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
                         if (videoRef.current) videoRef.current.srcObject = stream;
                     } catch (err) {
-                        showMsg('error', 'Gagal mengakses kamera');
+                        showMsg('error', 'Gagal mengakses kamera. Pastikan izin kamera diberikan.');
                         setView('dashboard');
                     }
                 }, 300);
@@ -156,19 +167,25 @@
             const submitData = async (task) => {
                 setLoading(true);
                 setShowOTModal(false);
-                const video = videoRef.current;
-                const canvas = canvasRef.current;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                ctx.fillStyle = "rgba(0,0,0,0.5)";
-                ctx.fillRect(0, canvas.height - 80, canvas.width, 80);
-                ctx.fillStyle = "white";
-                ctx.font = "14px Arial";
-                ctx.fillText(`${user.nama} | ${new Date().toLocaleString('id-ID')}`, 20, canvas.height - 50);
-                ctx.font = "10px Arial";
-                ctx.fillText(location.address.substring(0, 85), 20, canvas.height - 30);
-                const imageData = canvas.toDataURL('image/png');
+                
                 try {
+                    const video = videoRef.current;
+                    const canvas = canvasRef.current;
+                    const ctx = canvas.getContext('2d');
+                    
+                    if (!video || !canvas) throw new Error("Hardware kamera tidak siap");
+
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = "rgba(0,0,0,0.5)";
+                    ctx.fillRect(0, canvas.height - 80, canvas.width, 80);
+                    ctx.fillStyle = "white";
+                    ctx.font = "14px Arial";
+                    ctx.fillText(`${user.nama} | ${new Date().toLocaleString('id-ID')}`, 20, canvas.height - 50);
+                    ctx.font = "10px Arial";
+                    ctx.fillText(location.address.substring(0, 85), 20, canvas.height - 30);
+                    
+                    const imageData = canvas.toDataURL('image/png');
+                    
                     const res = await fetch(APP_SCRIPT_URL, {
                         method: 'POST',
                         body: JSON.stringify({
@@ -176,15 +193,23 @@
                             id: user.id, nama: user.nama, tipe: attendanceType, foto: imageData, alamat: location.address, tugasLembur: task
                         })
                     });
+                    
                     const result = await res.json();
                     if (result.success) {
                         showMsg('success', 'Presensi Berhasil!');
-                        if (video && video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+                        if (video && video.srcObject) {
+                            video.srcObject.getTracks().forEach(t => t.stop());
+                        }
                         setView('dashboard');
                         fetchHistory();
+                    } else {
+                        showMsg('error', result.message || 'Gagal mengirim data');
                     }
-                } catch (err) { showMsg('error', 'Gagal mengirim data'); }
-                setLoading(false);
+                } catch (err) { 
+                    showMsg('error', 'Gagal memproses presensi: ' + err.message); 
+                } finally {
+                    setLoading(false);
+                }
             };
 
             const handleUpdateKasbon = async () => {
@@ -201,9 +226,14 @@
                         setShowKasbonModal(false);
                         setKasbonData({ id: '', amount: '' });
                         fetchHistory(); 
+                    } else {
+                        showMsg('error', result.message || 'Gagal mencatat kasbon');
                     }
-                } catch (err) { showMsg('error', 'Gagal mencatat kasbon'); }
-                setLoading(false);
+                } catch (err) { 
+                    showMsg('error', 'Gagal mencatat kasbon'); 
+                } finally {
+                    setLoading(false);
+                }
             };
 
             const handleAddHoliday = async () => {
@@ -236,7 +266,6 @@
                 });
             };
 
-            // Download function for Daily Report
             const exportDailyReport = () => {
                 html2canvas(reportRef.current, { scale: 2 }).then(canvas => {
                     const link = document.createElement('a');
@@ -272,12 +301,10 @@
                 });
             }, [history, selectedMonth, selectedYear]);
 
-            // Logic to get data for a specific day report
             const dailyData = useMemo(() => {
                 const [ry, rm, rd] = reportDate.split('-');
                 const targetDateStr = `${rd}/${rm}/${ry}`;
                 
-                // Get all employees from usersMeta
                 const list = Object.values(usersMeta).map(emp => {
                     const inRecord = history.find(h => h.id === emp.id && h.tanggal === targetDateStr && h.tipe === 'IN');
                     const outRecord = history.find(h => h.id === emp.id && h.tanggal === targetDateStr && h.tipe === 'OUT');
@@ -383,7 +410,6 @@
                                     </div>
                                 </div>
                                 <h1 className="text-xl font-bold text-slate-800 tracking-tight leading-none uppercase">PT. ALUSINDO MITRA PROPERTI</h1>
-                                <h1 className="text-m font text-slate-800 tracking-tight leading-none uppercase">Head Office Absensi</h1>
                             </div>
                             <form onSubmit={handleLogin} className="space-y-4">
                                 <input name="id" placeholder="ID Karyawan" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500" required />
@@ -392,7 +418,7 @@
                                     {loading ? 'Sinkronisasi...' : 'Masuk Sistem'}
                                 </button>
                             </form>
-                            {message && <p className="text-red-500 text-center mt-4 text-xs font-bold uppercase">{message.text}</p>}
+                            {message && <p className={`text-center mt-4 text-xs font-bold uppercase ${message.type === 'error' ? 'text-red-500' : 'text-emerald-500'}`}>{message.text}</p>}
                         </div>
                     </div>
                 );
@@ -404,7 +430,7 @@
                         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/40 backdrop-blur-sm">
                             <div className="bg-white p-8 rounded-3xl flex flex-col items-center gap-4 shadow-xl">
                                 <div className="spinner"></div>
-                                <p className="font-bold text-slate-800 text-sm tracking-widest uppercase italic">Memperbarui Data...</p>
+                                <p className="font-bold text-slate-800 text-sm tracking-widest uppercase italic text-center">Sinkronisasi Data...<br/><span className="text-[10px] font-normal lowercase tracking-normal">Mohon tunggu sebentar</span></p>
                             </div>
                         </div>
                     )}
@@ -449,7 +475,6 @@
                         </div>
                     )}
 
-                    {/* MODAL LAPORAN HARIAN (DAILY REPORT) */}
                     {showDailyReportModal && (
                         <div className="fixed inset-0 z-[130] bg-slate-900/95 flex flex-col items-center p-4 overflow-y-auto pt-10 animate-in fade-in">
                             <div className="w-full max-w-2xl flex justify-between mb-6 px-4">
@@ -515,7 +540,41 @@
                         </div>
                     )}
 
-                    {/* VIEW SLIP GAJI */}
+                    {view === 'camera' && (
+                        <div className="fixed inset-0 z-[110] bg-black flex flex-col animate-in fade-in">
+                            <video ref={videoRef} autoPlay playsInline className="w-full flex-1 object-cover scale-x-[-1]" />
+                            <canvas ref={canvasRef} width="640" height="480" className="hidden" />
+                            <div className="absolute inset-x-0 bottom-0 p-10 bg-gradient-to-t from-black/80 to-transparent text-white space-y-8">
+                                <div className="flex gap-4 items-start bg-black/50 p-5 rounded-3xl backdrop-blur-xl border border-white/10 shadow-2xl">
+                                    <i data-lucide="map-pin" class="text-red-500 w-5 h-5 shrink-0 mt-1"></i>
+                                    <p className="text-[11px] leading-relaxed font-medium opacity-90">{location.address}</p>
+                                </div>
+                                <div className="flex justify-between items-center px-6">
+                                    <button onClick={() => { if(videoRef.current?.srcObject) videoRef.current.srcObject.getTracks().forEach(t=>t.stop()); setView('dashboard'); }} className="text-white font-bold bg-white/10 px-8 py-3 rounded-2xl backdrop-blur-md">Batal</button>
+                                    <button disabled={loading} onClick={() => { (attendanceType === 'OUT') ? setShowOTModal(true) : submitData(''); }} className="w-24 h-24 bg-white rounded-full p-1.5 shadow-[0_0_50px_rgba(255,255,255,0.4)] active:scale-95 transition-transform">
+                                        <div className="w-full h-full border-4 border-slate-100 rounded-full flex items-center justify-center">
+                                            {loading ? <div className="spinner !border-t-blue-600"></div> : <div className="w-16 h-16 bg-blue-600 rounded-full shadow-inner"></div>}
+                                        </div>
+                                    </button>
+                                    <div className="w-24" />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {showOTModal && (
+                        <div className="fixed inset-0 z-[115] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm">
+                            <div className="bg-white w-full rounded-[2.5rem] p-8 space-y-6 shadow-2xl animate-in">
+                                <div className="text-center uppercase font-bold tracking-widest text-slate-800">Tugas Lembur</div>
+                                <textarea className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl h-32 outline-none focus:ring-2 focus:ring-orange-500 text-sm" placeholder="Sebutkan pekerjaan Anda..." onChange={e => setOvertimeTask(e.target.value)} />
+                                <div className="flex gap-3">
+                                    <button onClick={() => setShowOTModal(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-400 uppercase text-xs">Batal</button>
+                                    <button onClick={() => submitData(overtimeTask)} className="flex-1 bg-orange-500 text-white py-4 rounded-2xl font-bold shadow-lg uppercase text-xs">Kirim</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {showPayslip && payslipUser && (
                         <div className="fixed inset-0 z-[116] bg-slate-900/95 flex flex-col items-center p-4 overflow-y-auto pt-10 animate-in fade-in no-print">
                             <div className="w-full max-w-4xl flex justify-between mb-6 px-4">
@@ -573,7 +632,6 @@
                                             </div>
                                             
                                             <div className="grid grid-cols-2 mt-8 gap-8">
-                                                {/* TABEL LEMBUR */}
                                                 <div>
                                                     <h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Lembur :</h5>
                                                     <table className="w-full border-collapse border border-slate-800 text-[10px]">
@@ -594,7 +652,6 @@
                                                     </table>
                                                 </div>
 
-                                                {/* TABEL TELAT */}
                                                 <div>
                                                     <h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Terlambat :</h5>
                                                     <table className="w-full border-collapse border border-slate-800 text-[10px]">
@@ -616,7 +673,6 @@
                                                 </div>
                                             </div>
 
-                                            {/* TABEL KASBON */}
                                             <div className="mt-8">
                                                 <h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Kasbon :</h5>
                                                 <table className="w-full border-collapse border border-slate-800 text-[10px]">
@@ -648,7 +704,6 @@
                         </div>
                     )}
 
-                    {/* DASHBOARD UI */}
                     <div className="p-6 bg-white border-b border-slate-200 flex justify-between items-center sticky top-0 z-20 shadow-sm">
                         <div className="flex items-center gap-4">
                             <img src={LOGO_URL} className="w-12 h-12 object-contain" />
@@ -659,8 +714,8 @@
 
                     <div className="flex-1 p-5 space-y-6 overflow-y-auto">
                         <div className="grid grid-cols-2 gap-4">
-                            <button onClick={() => startCamera('IN')} className="bg-emerald-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-emerald-200 transition-all active:scale-95"><i data-lucide="log-in" class="w-6 h-6"></i><span className="font-bold text-xs uppercase tracking-widest">Absen Masuk</span></button>
-                            <button onClick={() => startCamera('OUT')} className="bg-orange-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-orange-200 transition-all active:scale-95"><i data-lucide="log-out" class="w-6 h-6"></i><span className="font-bold text-xs uppercase tracking-widest">Absen Pulang</span></button>
+                            <button onClick={() => startCamera('IN')} className="bg-emerald-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-emerald-200 active:scale-95 transition-all"><i data-lucide="log-in" class="w-6 h-6"></i><span className="font-bold text-xs uppercase tracking-widest">Absen Masuk</span></button>
+                            <button onClick={() => startCamera('OUT')} className="bg-orange-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-orange-200 active:scale-95 transition-all"><i data-lucide="log-out" class="w-6 h-6"></i><span className="font-bold text-xs uppercase tracking-widest">Absen Pulang</span></button>
                         </div>
 
                         {isAdmin && (
@@ -677,7 +732,7 @@
                                     </button>
                                     <button onClick={() => setShowHolidayModal(true)} className="bg-red-500 text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform">
                                         <i data-lucide="calendar" class="w-5 h-5"></i>
-                                        <span className="text-[8px] uppercase">Set Libur</span>
+                                        <span className="text-[9px] uppercase">Set Libur</span>
                                     </button>
                                 </div>
                                 <div className="space-y-4 pt-4 border-t border-slate-100">
