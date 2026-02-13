@@ -16,7 +16,8 @@
         .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #b4941f; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .payslip-box { width: 850px; background: white; padding: 40px; color: #1e293b; }
-        .report-box { width: 700px; background: white; padding: 30px; color: #1e293b; }
+        .report-box { width: 750px; background: white; padding: 30px; color: #1e293b; }
+        .kasbon-report-box { width: 1000px; background: white; padding: 40px; color: #000; }
         @media print { .no-print { display: none; } }
     </style>
 </head>
@@ -44,6 +45,7 @@
             const [attendanceType, setAttendanceType] = useState('IN');
             const [history, setHistory] = useState([]);
             const [ijinList, setIjinList] = useState([]); 
+            const [kasbonLog, setKasbonLog] = useState([]); // State baru untuk riwayat kasbon
             const [usersMeta, setUsersMeta] = useState({}); 
             const [holidays, setHolidays] = useState([]); 
             const [overtimeTask, setOvertimeTask] = useState('');
@@ -58,6 +60,7 @@
             const [showHolidayModal, setShowHolidayModal] = useState(false);
             const [showDailyReportModal, setShowDailyReportModal] = useState(false);
             const [showIjinModal, setShowIjinModal] = useState(false); 
+            const [showKasbonReportModal, setShowKasbonReportModal] = useState(false); // Modal Laporan Kasbon baru
             
             const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
 
@@ -69,6 +72,7 @@
             const canvasRef = useRef(null);
             const payslipRef = useRef(null);
             const reportRef = useRef(null);
+            const kasbonReportRef = useRef(null);
 
             const isAdmin = useMemo(() => {
                 if (!user) return false;
@@ -83,7 +87,7 @@
 
             const showMsg = (type, text) => {
                 setMessage({ type, text });
-                setTimeout(() => setMessage(null), 5000);
+                setTimeout(() => setMessage(null), 6000);
             };
 
             const fetchHistory = async () => {
@@ -105,6 +109,7 @@
                         }
                         if (result.holidays) setHolidays(result.holidays);
                         if (result.ijinData) setIjinList(result.ijinData); 
+                        if (result.kasbonLog) setKasbonLog(result.kasbonLog); // Sync data log kasbon
                     }
                 } catch (err) { showMsg('error', 'Gagal sinkronisasi data'); }
                 setIsFetching(false);
@@ -132,6 +137,7 @@
                 setUsersMeta({});
                 setHolidays([]);
                 setIjinList([]);
+                setKasbonLog([]);
             };
 
             const startCamera = async (type) => {
@@ -205,6 +211,8 @@
                         setShowKasbonModal(false);
                         setKasbonData({ id: '', amount: '' });
                         fetchHistory(); 
+                    } else {
+                        showMsg('error', result.message || 'Gagal mencatat kasbon');
                     }
                 } catch (err) { showMsg('error', 'Gagal mencatat kasbon'); }
                 setLoading(false);
@@ -265,12 +273,18 @@
                 });
             };
 
-            // PERBAIKAN LOGIKA JAM CERDAS (Menangani "Sat D" dan format titik/titik dua)
+            const exportKasbonReport = () => {
+                html2canvas(kasbonReportRef.current, { scale: 2 }).then(canvas => {
+                    const link = document.createElement('a');
+                    link.download = `Laporan_Kasbon_${BULAN_INDO[selectedMonth]}_${selectedYear}.png`;
+                    link.href = canvas.toDataURL();
+                    link.click();
+                });
+            };
+
             const formatTimeDisplay = (timeStr) => {
                 if (!timeStr) return '-';
                 let str = String(timeStr).trim();
-                
-                // 1. Tangani format ISO (T)
                 if (str.includes('T')) {
                     const timePart = str.split('T')[1];
                     let hh = parseInt(timePart.substring(0, 2));
@@ -278,17 +292,10 @@
                     if (str.includes('1899')) hh = (hh + 7) % 24; 
                     return `${String(hh).padStart(2, '0')}:${mm}`;
                 }
-
-                // 2. Cari pola jam HH:mm atau HH.mm di dalam teks apa pun
                 const timeRegex = /(\d{1,2})[:.](\d{2})/;
                 const match = str.match(timeRegex);
-                if (match) {
-                    return `${match[1].padStart(2, '0')}:${match[2]}`;
-                }
-
-                // 3. Jika sudah telanjur terpotong menjadi "Sat D" dari backend lama
+                if (match) return `${match[1].padStart(2, '0')}:${match[2]}`;
                 if (str.toLowerCase().startsWith('sat') || str.toLowerCase().startsWith('sun')) return '-';
-
                 return str;
             };
 
@@ -320,22 +327,14 @@
                 const list = Object.values(usersMeta).map(emp => {
                     const inRecord = history.find(h => h.id === emp.id && h.tanggal === targetDateStr && h.tipe === 'IN');
                     const outRecord = history.find(h => h.id === emp.id && h.tanggal === targetDateStr && h.tipe === 'OUT');
-                    
                     let statusDisplay = '-';
                     const lemburVal = outRecord ? parseFloat(String(outRecord.lembur).replace(/[^0-9.-]+/g,"")) || 0 : 0;
-                    
                     if (lemburVal > 0) statusDisplay = 'Lembur';
                     else if (inRecord) statusDisplay = inRecord.status;
                     else if (outRecord) statusDisplay = 'Tanpa IN';
                     else statusDisplay = 'Mangkir/Libur';
-
                     return {
-                        nama: emp.nama,
-                        jabatan: emp.jabatan || emp.role,
-                        checkIn: inRecord ? formatTimeDisplay(inRecord.waktu) : '-',
-                        checkOut: outRecord ? formatTimeDisplay(outRecord.waktu) : '-',
-                        status: statusDisplay,
-                        telat: inRecord && inRecord.telat > 0 ? inRecord.telat : 0
+                        nama: emp.nama, jabatan: emp.jabatan || emp.role, checkIn: inRecord ? formatTimeDisplay(inRecord.waktu) : '-', checkOut: outRecord ? formatTimeDisplay(outRecord.waktu) : '-', status: statusDisplay, telat: inRecord && inRecord.telat > 0 ? inRecord.telat : 0
                     };
                 });
                 return { date: targetDateStr, list };
@@ -348,11 +347,7 @@
                     if (!groups[cleanId]) {
                         const meta = usersMeta[cleanId] || {};
                         groups[cleanId] = { 
-                            id: h.id, nama: h.nama, count: 0, data: [],
-                            gajiPokok: meta.gajiPokok || 4000000,
-                            noRek: meta.noRek || '-',
-                            kasbon: meta.kasbon || 0,
-                            role: meta.jabatan || meta.role || h.role || 'KARYAWAN'
+                            id: h.id, nama: h.nama, count: 0, data: [], gajiPokok: meta.gajiPokok || 4000000, noRek: meta.noRek || '-', kasbon: meta.kasbon || 0, role: meta.jabatan || meta.role || h.role || 'KARYAWAN'
                         };
                     }
                     groups[cleanId].data.push(h);
@@ -361,41 +356,43 @@
                 return Object.values(groups);
             }, [filteredHistory, usersMeta]);
 
+            // Data Kasbon Bulanan untuk Laporan Bos
+            const kasbonMonthlyData = useMemo(() => {
+                return kasbonLog.filter(log => {
+                    const [d, m, y] = log.tgl.split('-');
+                    const logMonth = BULAN_INDO.findIndex(b => b.substring(0,3).toLowerCase() === m.toLowerCase());
+                    return logMonth === selectedMonth && ("20" + y) === selectedYear.toString();
+                });
+            }, [kasbonLog, selectedMonth, selectedYear]);
+
             const calculatePayslipData = (targetUser, userHistory) => {
                 const cleanId = String(targetUser.id).trim().toLowerCase();
                 const meta = usersMeta[cleanId] || targetUser;
-                
                 const totalLembur = userHistory.reduce((acc, curr) => {
                     const cleanVal = parseFloat(String(curr.lembur).replace(/[^0-9.-]+/g,"")) || 0;
                     return acc + cleanVal;
                 }, 0);
-                
                 const now = new Date();
                 const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
                 const limitDay = (selectedMonth === now.getMonth() && selectedYear === now.getFullYear()) ? now.getDate() : daysInMonth;
-
                 let hariMangkir = 0;
                 let totalDendaIjin = 0;
                 let hariWajibKerjaBulanIni = 0;
                 const rincianIjinSakit = [];
                 const setAbsen = new Set(userHistory.filter(h => h.tipe === 'IN').map(h => h.tanggal));
-                
                 const currentMonthIjin = ijinList.filter(ij => {
                     const [d, m, y] = normalizeDateStr(ij.TanggalIjin).split('/');
                     return parseInt(m) === (selectedMonth + 1) && parseInt(y) === selectedYear && String(ij.IDKaryawan).trim().toLowerCase() === cleanId;
                 });
-
                 for (let d = 1; d <= daysInMonth; d++) {
                     const dateObj = new Date(selectedYear, selectedMonth, d);
                     const currentLoopDateStr = `${String(d).padStart(2, '0')}/${String(selectedMonth + 1).padStart(2, '0')}/${selectedYear}`;
                     const isSunday = dateObj.getDay() === 0;
                     const isHoliday = holidays.some(h => normalizeDateStr(h.date) === currentLoopDateStr);
-                    
                     if (!isSunday && !isHoliday) {
                         hariWajibKerjaBulanIni++;
                         const ijinHariIni = currentMonthIjin.find(ij => normalizeDateStr(ij.TanggalIjin) === currentLoopDateStr);
                         const recordIN = userHistory.find(h => h.tanggal === currentLoopDateStr && h.tipe === 'IN');
-
                         if (ijinHariIni) {
                             if (ijinHariIni.JenisIjin === 'Ijin Pribadi') {
                                 if (recordIN) {
@@ -403,15 +400,10 @@
                                     const jamMatch = jamStr.match(/^(\d{1,2})/);
                                     const jam = jamMatch ? parseInt(jamMatch[1]) : 0;
                                     let denda = 0;
-                                    if (jam >= 11) denda = 120000;
-                                    else if (jam >= 10) denda = 90000;
-                                    else if (jam >= 9) denda = 60000;
-                                    else if (jam >= 8) denda = 30000;
+                                    if (jam >= 11) denda = 120000; else if (jam >= 10) denda = 90000; else if (jam >= 9) denda = 60000; else if (jam >= 8) denda = 30000;
                                     totalDendaIjin += denda;
                                     rincianIjinSakit.push({ tgl: currentLoopDateStr, ket: `Ijin Pribadi (Masuk ${jamStr})`, denda: denda });
-                                } else if (d <= limitDay) {
-                                    hariMangkir++; 
-                                }
+                                } else if (d <= limitDay) hariMangkir++; 
                             } else if (ijinHariIni.JenisIjin === 'Sakit (Sah)' || ijinHariIni.JenisIjin === 'Sakit Berat') {
                                 rincianIjinSakit.push({ tgl: currentLoopDateStr, ket: ijinHariIni.JenisIjin, denda: 0 });
                             } else if (ijinHariIni.JenisIjin === 'Sakit (Potong Gaji)') {
@@ -419,19 +411,15 @@
                                 rincianIjinSakit.push({ tgl: currentLoopDateStr, ket: 'Sakit (Tanpa Surat)', denda: 'Potong Harian' });
                             }
                         } else {
-                            if (d <= limitDay && !setAbsen.has(currentLoopDateStr)) {
-                                hariMangkir++;
-                            }
+                            if (d <= limitDay && !setAbsen.has(currentLoopDateStr)) hariMangkir++;
                         }
                     }
                 }
-
                 const gajiPokok = Number(meta.gajiPokok || 4000000);
                 const gajiPerHari = Math.round(gajiPokok / 26);
                 const potonganAbsen = (gajiPerHari * hariMangkir) + totalDendaIjin;
                 const kasbon = parseFloat(String(meta.kasbon || 0).replace(/[^0-9.-]+/g,"")) || 0;
                 const totalGaji = gajiPokok + totalLembur - potonganAbsen - kasbon;
-
                 return { totalLembur, hariHadir: setAbsen.size, hariMangkir, totalDendaIjin, potonganAbsen, kasbon, totalGaji, meta, hariWajibKerja: hariWajibKerjaBulanIni, gajiPokok, userHistory, rincianIjinSakit };
             };
 
@@ -440,20 +428,14 @@
                     <div className="min-h-screen flex items-center justify-center p-6 bg-[#0f172a]">
                         <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-10 shadow-2xl animate-in text-center text-slate-800">
                             <div className="text-center mb-10">
-                                <div className="mb-6 flex justify-center">
-                                    <div className="w-24 h-24 rounded-3xl flex items-center justify-center overflow-hidden border border-slate-100 shadow-sm bg-slate-50">
-                                        <img src={LOGO_URL} alt="Logo" className="w-full h-full object-contain p-2" />
-                                    </div>
-                                </div>
+                                <div className="mb-6 flex justify-center"><div className="w-24 h-24 rounded-3xl flex items-center justify-center overflow-hidden border border-slate-100 shadow-sm bg-slate-50"><img src={LOGO_URL} alt="Logo" className="w-full h-full object-contain p-2" /></div></div>
                                 <h1 className="text-xl font-bold tracking-tight leading-none uppercase">PT. ALUSINDO MITRA PROPERTI</h1>
                                 <h1 className="text-s font tracking-tight leading-none uppercase">HEAD OFFICE ABSENSI</h1>
                             </div>
                             <form onSubmit={handleLogin} className="space-y-4">
                                 <input name="id" placeholder="ID Karyawan" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500" required />
                                 <input name="password" type="password" placeholder="Password" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500" required />
-                                <button disabled={loading} className="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg hover:bg-blue-700 transition-all uppercase tracking-widest text-sm">
-                                    {loading ? 'Sinkronisasi...' : 'Masuk Sistem'}
-                                </button>
+                                <button disabled={loading} className="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg hover:bg-blue-700 transition-all uppercase tracking-widest text-sm">{loading ? 'Sinkronisasi...' : 'Masuk Sistem'}</button>
                             </form>
                             {message && <p className="text-red-500 text-center mt-4 text-xs font-bold uppercase">{message.text}</p>}
                         </div>
@@ -464,124 +446,91 @@
             return (
                 <div className="min-h-screen max-lg mx-auto bg-[#f8fafc] flex flex-col shadow-2xl relative">
                     {isFetching && (
-                        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/40 backdrop-blur-sm text-center">
-                            <div className="bg-white p-8 rounded-3xl flex flex-col items-center gap-4 shadow-xl">
-                                <div className="spinner"></div>
-                                <p className="font-bold text-slate-800 text-sm tracking-widest uppercase italic text-center">Sinkronisasi Data...</p>
-                            </div>
-                        </div>
+                        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/40 backdrop-blur-sm text-center"><div className="bg-white p-8 rounded-3xl flex flex-col items-center gap-4 shadow-xl"><div className="spinner"></div><p className="font-bold text-slate-800 text-sm tracking-widest uppercase italic text-center">Sinkronisasi Data...</p></div></div>
                     )}
 
                     {/* MODAL INPUT IJIN / SAKIT */}
                     {showIjinModal && (
-                        <div className="fixed inset-0 z-[130] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm animate-in fade-in">
-                            <div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-6 shadow-2xl text-slate-800">
-                                <div className="text-center">
-                                    <h3 className="font-bold text-lg uppercase tracking-wide">Input Ijin / Sakit</h3>
-                                    <p className="text-[10px] text-slate-400 mt-1 uppercase">Otorisasi Absensi Karyawan</p>
-                                </div>
-                                <div className="space-y-4">
-                                    <select className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-purple-500 text-sm font-bold" onChange={(e) => setIjinInput({...ijinInput, id: e.target.value})}>
-                                        <option value="">-- Pilih Karyawan --</option>
-                                        {Object.values(usersMeta).map(k => <option key={k.id} value={k.id}>{k.nama}</option>)}
-                                    </select>
-                                    <input type="date" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-purple-500 text-sm font-bold uppercase" 
-                                        onChange={(e) => { 
-                                            const d = new Date(e.target.value); 
-                                            if(e.target.value) setIjinInput({...ijinInput, date: `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`}); 
-                                        }} 
-                                    />
-                                    <select className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-purple-500 text-sm font-bold" value={ijinInput.type} onChange={(e) => setIjinInput({...ijinInput, type: e.target.value})}>
-                                        <option value="Ijin Pribadi">Ijin Pribadi (Potong Berjenjang)</option>
-                                        <option value="Dinas Proyek">Dinas Proyek (Beda Lokasi)</option>
-                                        <option value="Sakit (Sah)">Sakit (Ada Surat Dokter)</option>
-                                        <option value="Sakit (Potong Gaji)">Sakit (Tanpa Surat)</option>
-                                        <option value="Sakit Berat">Sakit Berat (Opname/Kecelakaan)</option>
-                                    </select>
-                                    <input type="text" placeholder="Keterangan / Alasan" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-purple-500 text-sm font-bold" value={ijinInput.info} onChange={(e) => setIjinInput({...ijinInput, info: e.target.value})} />
-                                </div>
-                                <div className="flex gap-3">
-                                    <button onClick={() => setShowIjinModal(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-400 uppercase text-xs">Batal</button>
-                                    <button onClick={handleAddIjin} disabled={loading} className="flex-1 bg-purple-600 text-white py-4 rounded-2xl font-bold shadow-lg uppercase text-xs">Simpan Ijin</button>
-                                </div>
-                            </div>
-                        </div>
+                        <div className="fixed inset-0 z-[130] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm animate-in fade-in"><div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-6 shadow-2xl text-slate-800"><div className="text-center"><h3 className="font-bold text-lg uppercase tracking-wide">Input Ijin / Sakit</h3><p className="text-[10px] text-slate-400 mt-1 uppercase">Otorisasi Absensi Karyawan</p></div><div className="space-y-4"><select className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-purple-500 text-sm font-bold" onChange={(e) => setIjinInput({...ijinInput, id: e.target.value})}><option value="">-- Pilih Karyawan --</option>{Object.values(usersMeta).map(k => <option key={k.id} value={k.id}>{k.nama}</option>)}</select><input type="date" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-purple-500 text-sm font-bold uppercase" onChange={(e) => { const d = new Date(e.target.value); if(e.target.value) setIjinInput({...ijinInput, date: `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`}); }} /><select className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-purple-500 text-sm font-bold" value={ijinInput.type} onChange={(e) => setIjinInput({...ijinInput, type: e.target.value})}><option value="Ijin Pribadi">Ijin Pribadi (Potong Berjenjang)</option><option value="Dinas Proyek">Dinas Proyek (Beda Lokasi)</option><option value="Sakit (Sah)">Sakit (Ada Surat Dokter)</option><option value="Sakit (Potong Gaji)">Sakit (Tanpa Surat)</option><option value="Sakit Berat">Sakit Berat (Opname/Kecelakaan)</option></select><input type="text" placeholder="Keterangan / Alasan" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-purple-500 text-sm font-bold" value={ijinInput.info} onChange={(e) => setIjinInput({...ijinInput, info: e.target.value})} /></div><div className="flex gap-3"><button onClick={() => setShowIjinModal(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-400 uppercase text-xs">Batal</button><button onClick={handleAddIjin} disabled={loading} className="flex-1 bg-purple-600 text-white py-4 rounded-2xl font-bold shadow-lg uppercase text-xs">Simpan Ijin</button></div></div></div>
                     )}
 
-                    {/* MODAL KASBON */}
-                    {showKasbonModal && (
-                        <div className="fixed inset-0 z-[130] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm animate-in fade-in text-slate-800 text-center">
-                            <div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-6 shadow-2xl">
-                                <div className="text-center"><h3 className="font-bold text-lg uppercase tracking-wide">Input Kasbon</h3></div>
-                                <div className="space-y-4">
-                                    <select className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold" onChange={(e) => setKasbonData({...kasbonData, id: e.target.value})}>
-                                        <option value="">-- Pilih Karyawan --</option>
-                                        {Object.values(usersMeta).map(k => <option key={k.id} value={k.id}>{k.nama}</option>)}
-                                    </select>
-                                    <input type="number" placeholder="Nominal Rp" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold" value={kasbonData.amount} onChange={(e) => setKasbonData({...kasbonData, amount: e.target.value})}/>
-                                </div>
-                                <div className="flex gap-3">
-                                    <button onClick={() => setShowKasbonModal(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-400 uppercase text-xs">Batal</button>
-                                    <button onClick={handleUpdateKasbon} disabled={loading} className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-bold shadow-lg uppercase text-xs">Simpan</button>
-                                </div>
+                    {/* MODAL LAPORAN KASBON (TEMPLAT BARU) */}
+                    {showKasbonReportModal && (
+                        <div className="fixed inset-0 z-[135] bg-slate-900/95 flex flex-col items-center p-4 overflow-y-auto pt-10 animate-in fade-in">
+                            <div className="w-full max-w-5xl flex justify-between mb-6 px-4">
+                                <button onClick={() => setShowKasbonReportModal(false)} className="bg-white/10 text-white px-8 py-3 rounded-2xl font-bold border border-white/10 flex items-center gap-2"><i data-lucide="arrow-left" class="w-4 h-4"></i> Kembali</button>
+                                <button onClick={exportKasbonReport} className="bg-[#b4941f] text-white px-8 py-3 rounded-2xl font-bold shadow-xl flex items-center gap-2"><i data-lucide="download" class="w-4 h-4"></i> Unduh Laporan (Bos)</button>
                             </div>
-                        </div>
-                    )}
-
-                    {/* MODAL SET LIBUR */}
-                    {showHolidayModal && (
-                        <div className="fixed inset-0 z-[130] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm animate-in fade-in text-slate-800 text-center">
-                            <div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-6 shadow-2xl">
-                                <div className="text-center"><h3 className="font-bold text-lg uppercase tracking-wide">Set Hari Libur</h3><p className="text-xs text-slate-400 mt-1">Gaji tidak dipotong hari ini</p></div>
-                                <div className="space-y-4">
-                                    <input type="date" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-red-500 text-sm font-bold uppercase" onChange={(e) => { const d = new Date(e.target.value); if(e.target.value) setHolidayInput({...holidayInput, date: `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`}); }} />
-                                    <input type="text" placeholder="Keterangan Libur" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-red-500 text-sm font-bold" value={holidayInput.info} onChange={(e) => setHolidayInput({...holidayInput, info: e.target.value})} />
-                                </div>
-                                <div className="flex gap-3">
-                                    <button onClick={() => setShowHolidayModal(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-400 uppercase text-xs">Batal</button>
-                                    <button onClick={handleAddHoliday} disabled={loading} className="flex-1 bg-red-500 text-white py-4 rounded-2xl font-bold shadow-lg uppercase text-xs">Simpan</button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* MODAL LAPORAN HARIAN */}
-                    {showDailyReportModal && (
-                        <div className="fixed inset-0 z-[130] bg-slate-900/95 flex flex-col items-center p-4 overflow-y-auto pt-10 animate-in fade-in">
-                            <div className="w-full max-w-2xl flex justify-between mb-6 px-4">
-                                <button onClick={() => setShowDailyReportModal(false)} className="bg-white/10 text-white px-8 py-3 rounded-2xl font-bold border border-white/10 flex items-center gap-2"><i data-lucide="arrow-left" class="w-4 h-4"></i> Kembali</button>
-                                <button onClick={exportDailyReport} className="bg-emerald-600 text-white px-8 py-3 rounded-2xl font-bold shadow-xl flex items-center gap-2"><i data-lucide="download" class="w-4 h-4"></i> Unduh PNG</button>
-                            </div>
-                            <div className="bg-white p-4 rounded-2xl mb-6 w-full max-w-lg flex flex-col gap-2">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">Tanggal Laporan:</label>
-                                <input type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} className="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-sm font-bold" />
-                            </div>
-                            <div ref={reportRef} className="report-box shadow-2xl rounded-lg border-t-[8px] border-emerald-500">
-                                <div className="flex justify-between items-center border-b border-slate-200 pb-4 mb-6">
-                                    <div className="flex items-center gap-3">
-                                        <img src={LOGO_URL} className="w-12 h-12 object-contain" />
-                                        <div><h2 className="font-bold text-sm text-slate-800 uppercase leading-none">PT. ALUSINDO MITRA PROPERTI</h2><p className="text-[9px] text-slate-400 mt-1 uppercase font-bold tracking-tighter">Laporan Absensi Harian</p></div>
+                            
+                            <div ref={kasbonReportRef} className="kasbon-report-box shadow-2xl rounded-sm">
+                                <div className="flex justify-between items-center border-b-4 border-black pb-4 mb-8">
+                                    <div className="flex items-center gap-6">
+                                        <img src={LOGO_URL} className="w-24 h-24 object-contain" />
+                                        <div className="text-center">
+                                            <h2 className="font-bold text-2xl tracking-tighter uppercase leading-none">PT. ALUSINDO MITRA PROPERTI</h2>
+                                            <p className="text-xs font-black uppercase tracking-widest mt-1">Kontraktor - Arsitektur - Interior Design</p>
+                                            <p className="text-[10px] text-slate-600 mt-1">Jl. Parung Jaya No. 7A Karang Tengah Kota Tangerang<br/>telp : 0221 59730099 Wa : 0813 1595 3328</p>
+                                        </div>
                                     </div>
-                                    <div className="text-right"><h1 className="text-xl font-black text-emerald-600 italic uppercase">{dailyData.date}</h1></div>
                                 </div>
-                                <table className="w-full border-collapse border border-slate-800 text-[10px] text-slate-800">
-                                    <thead className="bg-slate-100 uppercase font-bold text-center">
-                                        <tr><th className="border border-slate-800 p-2">Nama</th><th className="border border-slate-800 p-2">Jabatan</th><th className="border border-slate-800 p-2">Masuk</th><th className="border border-slate-800 p-2">Pulang</th><th className="border border-slate-800 p-2">Status</th></tr>
+
+                                <table className="w-full border-collapse border-2 border-black text-center text-xs">
+                                    <thead className="bg-[#00b050] text-white uppercase font-bold">
+                                        <tr>
+                                            <th className="border border-black p-3 w-12">No</th>
+                                            <th className="border border-black p-3">Tgl</th>
+                                            <th className="border border-black p-3">Nama Karyawan</th>
+                                            <th className="border border-black p-3">Jabatan</th>
+                                            <th className="border border-black p-3">Kasbon</th>
+                                            <th className="border border-black p-3">TOTAL</th>
+                                            <th className="border border-black p-3">Keterangan</th>
+                                            <th className="border border-black p-3">No Rekening pembayaran</th>
+                                        </tr>
                                     </thead>
                                     <tbody>
-                                        {dailyData.list.map((row, i) => (
-                                            <tr key={i}>
-                                                <td className="border border-slate-800 p-2 font-bold uppercase">{row.nama}</td>
-                                                <td className="border border-slate-800 p-2 text-center uppercase">{row.jabatan}</td>
-                                                <td className="border border-slate-800 p-2 text-center font-bold text-emerald-600">{row.checkIn}</td>
-                                                <td className="border border-slate-800 p-2 text-center font-bold text-orange-600">{row.checkOut}</td>
-                                                <td className={`border border-slate-800 p-2 text-center text-[9px] font-black uppercase ${row.status === 'Lembur' ? 'text-blue-600' : (row.telat > 0 ? 'text-red-500' : 'text-slate-400')}`}>{row.telat > 0 ? `Telat ${row.telat}m` : row.status}</td>
+                                        {kasbonMonthlyData.length > 0 ? kasbonMonthlyData.map((k, i) => (
+                                            <tr key={i} className="font-bold">
+                                                <td className="border border-black p-3">{i+1}</td>
+                                                <td className="border border-black p-3 whitespace-nowrap">{k.tgl}</td>
+                                                <td className="border border-black p-3 text-left uppercase">{k.nama}</td>
+                                                <td className="border border-black p-3">{k.jabatan}</td>
+                                                <td className="border border-black p-3 text-right">{Number(k.amount).toLocaleString()}</td>
+                                                <td className="border border-black p-3 text-right">Rp {Number(k.amount).toLocaleString()}</td>
+                                                <td className="border border-black p-3 italic text-[10px]">{k.keterangan}</td>
+                                                <td className="border border-black p-3 text-[10px] leading-tight">Bank BCA An. {k.nama}<br/>No.{k.noRek}</td>
                                             </tr>
-                                        ))}
+                                        )) : (
+                                            <tr><td colSpan="8" className="border border-black p-10 text-slate-400 italic">Tidak ada pengajuan kasbon di periode ini</td></tr>
+                                        )}
                                     </tbody>
+                                    <tfoot className="bg-[#ffff00] font-black uppercase italic">
+                                        <tr>
+                                            <td colSpan="5" className="border border-black p-4 text-center">Grand Total</td>
+                                            <td className="border border-black p-4 text-right">Rp {kasbonMonthlyData.reduce((acc, curr) => acc + Number(curr.amount), 0).toLocaleString()}</td>
+                                            <td colSpan="2" className="border border-black p-4"></td>
+                                        </tr>
+                                    </tfoot>
                                 </table>
+                                <div className="mt-10 flex justify-between px-10 text-sm font-bold uppercase italic">
+                                    <div className="text-center"><p>Dibuat Oleh,</p><div className="h-20"></div><p className="border-t border-black px-4">Admin Operational</p></div>
+                                    <div className="text-center"><p>Disetujui Oleh,</p><div className="h-20"></div><p className="border-t border-black px-4">Direktur Utama</p></div>
+                                </div>
                             </div>
                         </div>
+                    )}
+
+                    {/* MODAL KASBON INPUT (DENGAN PESAN ERROR) */}
+                    {showKasbonModal && (
+                        <div className="fixed inset-0 z-[130] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm animate-in fade-in text-slate-800 text-center"><div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-6 shadow-2xl"><div className="text-center"><h3 className="font-bold text-lg uppercase tracking-wide">Input Kasbon Baru</h3><p className="text-[10px] text-slate-400 mt-1 uppercase italic">Limit: 1x Per Bulan</p></div><div className="space-y-4"><select className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold" onChange={(e) => setKasbonData({...kasbonData, id: e.target.value})}><option value="">-- Pilih Karyawan --</option>{Object.values(usersMeta).map(k => <option key={k.id} value={k.id}>{k.nama}</option>)}</select><input type="number" placeholder="Nominal Kasbon" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold" value={kasbonData.amount} onChange={(e) => setKasbonData({...kasbonData, amount: e.target.value})}/></div><div className="flex gap-3"><button onClick={() => setShowKasbonModal(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-400 uppercase text-xs">Batal</button><button onClick={handleUpdateKasbon} disabled={loading} className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-bold shadow-lg uppercase text-xs">Ajukan Kasbon</button></div></div></div>
+                    )}
+
+                    {/* MODAL-MODAL LAIN TETAP DIJAGA (Holidays, Daily Report) */}
+                    {showHolidayModal && (
+                        <div className="fixed inset-0 z-[130] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm animate-in fade-in text-slate-800 text-center"><div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-6 shadow-2xl"><div className="text-center"><h3 className="font-bold text-lg uppercase tracking-wide">Set Hari Libur</h3><p className="text-xs text-slate-400 mt-1">Gaji tidak dipotong hari ini</p></div><div className="space-y-4"><input type="date" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-red-500 text-sm font-bold uppercase" onChange={(e) => { const d = new Date(e.target.value); if(e.target.value) setHolidayInput({...holidayInput, date: `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`}); }} /><input type="text" placeholder="Keterangan Libur" className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl outline-none focus:ring-2 focus:ring-red-500 text-sm font-bold" value={holidayInput.info} onChange={(e) => setHolidayInput({...holidayInput, info: e.target.value})} /></div><div className="flex gap-3"><button onClick={() => setShowHolidayModal(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-400 uppercase text-xs">Batal</button><button onClick={handleAddHoliday} disabled={loading} className="flex-1 bg-red-500 text-white py-4 rounded-2xl font-bold shadow-lg uppercase text-xs">Simpan</button></div></div></div>
+                    )}
+
+                    {showDailyReportModal && (
+                        <div className="fixed inset-0 z-[130] bg-slate-900/95 flex flex-col items-center p-4 overflow-y-auto pt-10 animate-in fade-in"><div className="w-full max-w-2xl flex justify-between mb-6 px-4"><button onClick={() => setShowDailyReportModal(false)} className="bg-white/10 text-white px-8 py-3 rounded-2xl font-bold border border-white/10 flex items-center gap-2"><i data-lucide="arrow-left" class="w-4 h-4"></i> Kembali</button><button onClick={exportDailyReport} className="bg-emerald-600 text-white px-8 py-3 rounded-2xl font-bold shadow-xl flex items-center gap-2"><i data-lucide="download" class="w-4 h-4"></i> Unduh PNG</button></div><div className="bg-white p-4 rounded-2xl mb-6 w-full max-w-lg flex flex-col gap-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">Tanggal Laporan:</label><input type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} className="w-full bg-slate-50 border border-slate-100 p-3 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-sm font-bold" /></div><div ref={reportRef} className="report-box shadow-2xl rounded-lg border-t-[8px] border-emerald-500"><div className="flex justify-between items-center border-b border-slate-200 pb-4 mb-6"><div className="flex items-center gap-3"><img src={LOGO_URL} className="w-12 h-12 object-contain" /><div><h2 className="font-bold text-sm text-slate-800 uppercase leading-none">PT. ALUSINDO MITRA PROPERTI</h2><p className="text-[9px] text-slate-400 mt-1 uppercase font-bold tracking-tighter">Laporan Absensi Harian</p></div></div><div className="text-right"><h1 className="text-xl font-black text-emerald-600 italic uppercase">{dailyData.date}</h1></div></div><table className="w-full border-collapse border border-slate-800 text-[10px] text-slate-800"><thead className="bg-slate-100 uppercase font-bold text-center"><tr><th className="border border-slate-800 p-2">Nama</th><th className="border border-slate-800 p-2">Jabatan</th><th className="border border-slate-800 p-2">Masuk</th><th className="border border-slate-800 p-2">Pulang</th><th className="border border-slate-800 p-2">Status</th></tr></thead><tbody>{dailyData.list.map((row, i) => (<tr key={i}><td className="border border-slate-800 p-2 font-bold uppercase">{row.nama}</td><td className="border border-slate-800 p-2 text-center uppercase">{row.jabatan}</td><td className="border border-slate-800 p-2 text-center font-bold text-emerald-600">{row.checkIn}</td><td className="border border-slate-800 p-2 text-center font-bold text-orange-600">{row.checkOut}</td><td className={`border border-slate-800 p-2 text-center text-[9px] font-black uppercase ${row.status === 'Lembur' ? 'text-blue-600' : (row.telat > 0 ? 'text-red-500' : 'text-slate-400')}`}>{row.telat > 0 ? `Telat ${row.telat}m` : row.status}</td></tr>))}</tbody></table></div></div>
                     )}
 
                     {/* SLIP GAJI */}
@@ -593,10 +542,7 @@
                             </div>
                             <div ref={payslipRef} className="payslip-box shadow-2xl border-t-[10px] border-[#b4941f] rounded-lg">
                                 <div className="flex justify-between items-start border-b border-slate-200 pb-6 mb-8">
-                                    <div className="flex items-center gap-4">
-                                        <img src={LOGO_URL} className="w-20 h-20 object-contain" />
-                                        <div className="text-[10px] text-slate-500"><h2 className="font-bold text-base text-slate-800 uppercase leading-none">PT. ALUSINDO MITRA PROPERTI</h2><p className="mt-2 leading-relaxed italic uppercase font-bold tracking-tight">Arsitektur - Interior - Kontraktor</p></div>
-                                    </div>
+                                    <div className="flex items-center gap-4"><img src={LOGO_URL} className="w-20 h-20 object-contain" /><div className="text-[10px] text-slate-500"><h2 className="font-bold text-base text-slate-800 uppercase leading-none">PT. ALUSINDO MITRA PROPERTI</h2><p className="mt-2 leading-relaxed italic uppercase font-bold tracking-tight">Arsitektur - Interior - Kontraktor</p></div></div>
                                     <div className="text-right"><h1 className="text-4xl font-black text-slate-800 tracking-tighter uppercase italic">SLIP GAJI</h1></div>
                                 </div>
                                 {(() => {
@@ -613,53 +559,22 @@
                                             <div className="grid grid-cols-2 gap-10 mb-8">
                                                 <div className="space-y-4">
                                                     <h4 className="bg-slate-100 p-2 px-4 font-bold text-xs uppercase tracking-widest border-l-4 border-emerald-500">PENDAPATAN</h4>
-                                                    <div className="text-xs space-y-2 px-4">
-                                                        <div className="flex justify-between"><span>Gaji Pokok</span><span className="font-bold">{gajiPokok.toLocaleString()}</span></div>
-                                                        <div className="flex justify-between"><span>Lembur</span><span className="font-bold">{totalLembur.toLocaleString()}</span></div>
-                                                        <div className="flex justify-between font-bold border-t border-slate-200 pt-2 text-emerald-600"><span>TOTAL</span><span>{(gajiPokok + totalLembur).toLocaleString()}</span></div>
-                                                    </div>
+                                                    <div className="text-xs space-y-2 px-4"><div className="flex justify-between"><span>Gaji Pokok</span><span className="font-bold">{gajiPokok.toLocaleString()}</span></div><div className="flex justify-between"><span>Lembur</span><span className="font-bold">{totalLembur.toLocaleString()}</span></div><div className="flex justify-between font-bold border-t border-slate-200 pt-2 text-emerald-600"><span>TOTAL</span><span>{(gajiPokok + totalLembur).toLocaleString()}</span></div></div>
                                                 </div>
                                                 <div className="space-y-4">
                                                     <h4 className="bg-slate-100 p-2 px-4 font-bold text-xs uppercase tracking-widest border-l-4 border-red-500">POTONGAN</h4>
-                                                    <div className="text-xs space-y-2 px-4 text-red-600">
-                                                        <div className="flex justify-between"><span>Absensi (Potongan & Mangkir)</span><span className="font-bold">{potonganAbsen.toLocaleString()}</span></div>
-                                                        <div className="flex justify-between"><span>Kasbon</span><span className="font-bold text-red-700">{kasbon.toLocaleString()}</span></div>
-                                                        <div className="flex justify-between font-bold border-t border-slate-200 pt-2 text-slate-800"><span>TOTAL POTONGAN</span><span>{(potonganAbsen + kasbon).toLocaleString()}</span></div>
-                                                    </div>
+                                                    <div className="text-xs space-y-2 px-4 text-red-600"><div className="flex justify-between"><span>Absensi (Potongan & Mangkir)</span><span className="font-bold">{potonganAbsen.toLocaleString()}</span></div><div className="flex justify-between"><span>Kasbon</span><span className="font-bold text-red-700">{kasbon.toLocaleString()}</span></div><div className="flex justify-between font-bold border-t border-slate-200 pt-2 text-slate-800"><span>TOTAL POTONGAN</span><span>{(potonganAbsen + kasbon).toLocaleString()}</span></div></div>
                                                 </div>
                                             </div>
                                             <div className="mt-6 border-4 border-red-500 p-5 inline-block font-black text-slate-800 uppercase italic">TOTAL GAJI DITERIMA : <span className="text-3xl ml-6 text-red-600">Rp {totalGaji.toLocaleString()}</span></div>
-                                            
                                             <div className="grid grid-cols-2 mt-10 gap-6">
-                                                <div><h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Lembur :</h5>
-                                                    <table className="w-full border-collapse border border-slate-800 text-[10px] text-slate-800">
-                                                        <thead className="bg-slate-50 uppercase font-bold text-center"><tr><th className="border border-slate-800 p-2">Tgl</th><th className="border border-slate-800 p-2 text-left">Tugas</th><th className="border border-slate-800 p-2">Nominal</th></tr></thead>
-                                                        <tbody>{lemburList.length > 0 ? lemburList.map((h, i) => (<tr key={i}><td className="border border-slate-800 p-2 text-center">{h.tanggal}</td><td className="border border-slate-800 p-2 uppercase italic">{h.tugasLembur || '-'}</td><td className="border border-slate-800 p-2 text-right font-bold">Rp {parseFloat(String(h.lembur).replace(/[^0-9.-]+/g,"")).toLocaleString()}</td></tr>)) : <tr><td colSpan="3" className="border border-slate-800 p-2 text-center text-slate-300 italic">Tidak ada lembur</td></tr>}</tbody>
-                                                    </table>
-                                                </div>
-                                                <div><h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Ijin & Sakit :</h5>
-                                                    <table className="w-full border-collapse border border-slate-800 text-[10px] text-slate-800">
-                                                        <thead className="bg-slate-50 uppercase font-bold text-center"><tr><th className="border border-slate-800 p-2">Tgl</th><th className="border border-slate-800 p-2 text-left">Ket</th><th className="border border-slate-800 p-2">Pot/m</th></tr></thead>
-                                                        <tbody>{rincianIjinSakit.length > 0 ? rincianIjinSakit.map((h, i) => (<tr key={i}><td className="border border-slate-800 p-2 text-center">{h.tgl}</td><td className="border border-slate-800 p-2 uppercase italic">{h.ket}</td><td className="border border-slate-800 p-2 text-right text-red-600 font-bold">{h.denda === 0 ? 'Free' : (typeof h.denda === 'string' ? h.denda : 'Rp ' + h.denda.toLocaleString())}</td></tr>)) : <tr><td colSpan="3" className="border border-slate-800 p-2 text-center text-slate-300 italic uppercase">Bersih</td></tr>}</tbody>
-                                                    </table>
-                                                </div>
+                                                <div><h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Lembur :</h5><table className="w-full border-collapse border border-slate-800 text-[10px] text-slate-800"><thead className="bg-slate-50 uppercase font-bold text-center"><tr><th className="border border-slate-800 p-2">Tgl</th><th className="border border-slate-800 p-2 text-left">Tugas</th><th className="border border-slate-800 p-2">Nominal</th></tr></thead><tbody>{lemburList.length > 0 ? lemburList.map((h, i) => (<tr key={i}><td className="border border-slate-800 p-2 text-center">{h.tanggal}</td><td className="border border-slate-800 p-2 uppercase italic">{h.tugasLembur || '-'}</td><td className="border border-slate-800 p-2 text-right font-bold">Rp {parseFloat(String(h.lembur).replace(/[^0-9.-]+/g,"")).toLocaleString()}</td></tr>)) : <tr><td colSpan="3" className="border border-slate-800 p-2 text-center text-slate-300 italic">Tidak ada lembur</td></tr>}</tbody></table></div>
+                                                <div><h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Ijin & Sakit :</h5><table className="w-full border-collapse border border-slate-800 text-[10px] text-slate-800"><thead className="bg-slate-50 uppercase font-bold text-center"><tr><th className="border border-slate-800 p-2">Tgl</th><th className="border border-slate-800 p-2 text-left">Ket</th><th className="border border-slate-800 p-2">Pot/m</th></tr></thead><tbody>{rincianIjinSakit.length > 0 ? rincianIjinSakit.map((h, i) => (<tr key={i}><td className="border border-slate-800 p-2 text-center">{h.tgl}</td><td className="border border-slate-800 p-2 uppercase italic">{h.ket}</td><td className="border border-slate-800 p-2 text-right text-red-600 font-bold">{h.denda === 0 ? 'Free' : (typeof h.denda === 'string' ? h.denda : 'Rp ' + h.denda.toLocaleString())}</td></tr>)) : <tr><td colSpan="3" className="border border-slate-800 p-2 text-center text-slate-300 italic uppercase">Bersih</td></tr>}</tbody></table></div>
                                             </div>
-
                                             <div className="grid grid-cols-2 mt-6 gap-6">
-                                                <div><h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Kasbon :</h5>
-                                                    <table className="w-full border-collapse border border-slate-800 text-[10px] text-slate-800">
-                                                        <thead className="bg-slate-50 uppercase font-bold"><tr><th className="border border-slate-800 p-2 text-left px-4">Keterangan</th><th className="border border-slate-800 p-2 text-right px-4">Nominal</th></tr></thead>
-                                                        <tbody>{kasbon > 0 ? (<tr><td className="border border-slate-800 p-2 px-4 italic uppercase">Potongan Kasbon Bulan Berjalan</td><td className="border border-slate-800 p-2 px-4 text-right font-black text-red-600">Rp {kasbon.toLocaleString()}</td></tr>) : (<tr><td colSpan="2" className="border border-slate-800 p-2 text-center text-slate-300 italic uppercase">Tanpa riwayat kasbon</td></tr>)}</tbody>
-                                                    </table>
-                                                </div>
-                                                <div><h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Terlambat :</h5>
-                                                    <table className="w-full border-collapse border border-slate-800 text-[10px] text-slate-800">
-                                                        <thead className="bg-slate-50 uppercase font-bold text-center"><tr><th className="border border-slate-800 p-2">Tgl</th><th className="border border-slate-800 p-2">Jam</th><th className="border border-slate-800 p-2">Durasi</th></tr></thead>
-                                                        <tbody>{telatList.length > 0 ? telatList.map((h, i) => (<tr key={i}><td className="border border-slate-800 p-2 text-center">{h.tanggal}</td><td className="border border-slate-800 p-2 text-center">{formatTimeDisplay(h.waktu)}</td><td className="border border-slate-800 p-2 text-center text-red-500 font-black">{h.telat} Menit</td></tr>)) : <tr><td colSpan="3" className="border border-slate-800 p-2 text-center text-slate-300 italic uppercase">Tepat Waktu Seluruhnya</td></tr>}</tbody>
-                                                    </table>
-                                                </div>
+                                                <div><h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Kasbon :</h5><table className="w-full border-collapse border border-slate-800 text-[10px] text-slate-800"><thead className="bg-slate-50 uppercase font-bold"><tr><th className="border border-slate-800 p-2 text-left px-4">Keterangan</th><th className="border border-slate-800 p-2 text-right px-4">Nominal</th></tr></thead><tbody>{kasbon > 0 ? (<tr><td className="border border-slate-800 p-2 px-4 italic uppercase">Potongan Kasbon Bulan Berjalan</td><td className="border border-slate-800 p-2 px-4 text-right font-black text-red-600">Rp {kasbon.toLocaleString()}</td></tr>) : (<tr><td colSpan="2" className="border border-slate-800 p-2 text-center text-slate-300 italic uppercase">Tanpa riwayat kasbon</td></tr>)}</tbody></table></div>
+                                                <div><h5 className="text-[10px] font-bold mb-2 uppercase text-slate-400 italic">Rincian Terlambat :</h5><table className="w-full border-collapse border border-slate-800 text-[10px] text-slate-800"><thead className="bg-slate-50 uppercase font-bold text-center"><tr><th className="border border-slate-800 p-2">Tgl</th><th className="border border-slate-800 p-2">Jam</th><th className="border border-slate-800 p-2">Durasi</th></tr></thead><tbody>{telatList.length > 0 ? telatList.map((h, i) => (<tr key={i}><td className="border border-slate-800 p-2 text-center">{h.tanggal}</td><td className="border border-slate-800 p-2 text-center">{formatTimeDisplay(h.waktu)}</td><td className="border border-slate-800 p-2 text-center text-red-500 font-black">{h.telat} Menit</td></tr>)) : <tr><td colSpan="3" className="border border-slate-800 p-2 text-center text-slate-300 italic uppercase">Tepat Waktu Seluruhnya</td></tr>}</tbody></table></div>
                                             </div>
-
                                             <div className="mt-8 text-[11px] font-bold text-slate-500 uppercase tracking-wide">REKENING : {meta.noRek || '-'} (BCA - {payslipUser.nama})</div>
                                             <div className="mt-1 text-[9px] text-slate-400 italic">*Wajib Masuk: {hariWajibKerja} Hari. Kehadiran: {hariHadir} Hari. {hariMangkir > 0 ? `Mangkir: ${hariMangkir} Hari.` : ''}</div>
                                         </React.Fragment>
@@ -669,16 +584,15 @@
                         </div>
                     )}
 
-                    {/* HEADER DASHBOARD */}
+                    {/* DASHBOARD HEADER */}
                     <div className="p-6 bg-white border-b border-slate-200 flex justify-between items-center sticky top-0 z-20 shadow-sm text-slate-800">
-                        <div className="flex items-center gap-4">
-                            <img src={LOGO_URL} className="w-12 h-12 object-contain" />
-                            <div><h2 className="font-bold text-base leading-tight uppercase tracking-tight">{user.nama}</h2><p className="text-[10px] text-blue-600 font-black uppercase tracking-[0.2em]">{user.role || user.jabatan}</p></div>
-                        </div>
+                        <div className="flex items-center gap-4"><img src={LOGO_URL} className="w-12 h-12 object-contain" /><div><h2 className="font-bold text-base leading-tight uppercase tracking-tight">{user.nama}</h2><p className="text-[10px] text-blue-600 font-black uppercase tracking-[0.2em]">{user.role || user.jabatan}</p></div></div>
                         <button onClick={handleLogout} className="p-3 bg-red-50 text-red-500 rounded-2xl hover:bg-red-100 transition-colors shadow-sm"><i data-lucide="log-out" class="w-5 h-5"></i></button>
                     </div>
 
                     <div className="flex-1 p-5 space-y-6 overflow-y-auto">
+                        {message && <div className={`p-4 rounded-2xl text-center text-xs font-bold uppercase animate-bounce ${message.type === 'error' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>{message.text}</div>}
+                        
                         <div className="grid grid-cols-2 gap-4">
                             <button onClick={() => startCamera('IN')} className="bg-emerald-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-emerald-200 active:scale-95 transition-all"><i data-lucide="log-in" class="w-6 h-6"></i><span className="font-bold text-xs uppercase tracking-widest">Absen Masuk</span></button>
                             <button onClick={() => startCamera('OUT')} className="bg-orange-500 text-white p-7 rounded-[2.5rem] flex flex-col items-center gap-2 shadow-xl shadow-orange-200 active:scale-95 transition-all"><i data-lucide="log-out" class="w-6 h-6"></i><span className="font-bold text-xs uppercase tracking-widest">Absen Pulang</span></button>
@@ -686,29 +600,19 @@
 
                         {isAdmin && (
                             <div className="bg-white p-6 rounded-[2.5rem] border-2 border-blue-50 shadow-sm space-y-6 animate-in fade-in text-slate-800">
-                                <div className="flex justify-between items-center"><h3 className="font-bold text-sm uppercase tracking-wider flex items-center gap-2 italic"><i data-lucide="layout-dashboard" class="w-4 h-4 text-blue-600"></i> Kontrol Admin</h3></div>
-                                <div className="grid grid-cols-2 gap-3 text-center">
-                                    <button onClick={() => setShowDailyReportModal(true)} className="bg-emerald-600 text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform"><i data-lucide="file-text" class="w-5 h-5"></i><span className="text-[8px] uppercase">Laporan Harian</span></button>
-                                    <button onClick={() => setShowIjinModal(true)} className="bg-purple-600 text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform"><i data-lucide="clipboard-list" class="w-5 h-5"></i><span className="text-[8px] uppercase">Manajemen Ijin</span></button>
-                                    <button onClick={() => setShowKasbonModal(true)} className="bg-blue-600 text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform"><i data-lucide="wallet" class="w-5 h-5"></i><span className="text-[8px] uppercase">Input Kasbon</span></button>
-                                    <button onClick={() => setShowHolidayModal(true)} className="bg-red-500 text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform"><i data-lucide="calendar" class="w-5 h-5"></i><span className="text-[8px] uppercase tracking-tighter">Set Libur</span></button>
+                                <div className="flex justify-between items-center"><h3 className="font-bold text-sm uppercase tracking-wider flex items-center gap-2 italic text-slate-800"><i data-lucide="layout-dashboard" class="w-4 h-4 text-blue-600"></i> Kontrol Admin</h3></div>
+                                <div className="grid grid-cols-3 gap-2 text-center">
+                                    <button onClick={() => setShowDailyReportModal(true)} className="bg-emerald-600 text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform"><i data-lucide="file-text" class="w-4 h-4"></i><span className="text-[7px] uppercase">Laporan Harian</span></button>
+                                    <button onClick={() => setShowKasbonReportModal(true)} className="bg-[#00b050] text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform"><i data-lucide="printer" class="w-4 h-4"></i><span className="text-[7px] uppercase font-black text-yellow-300">Laporan Kasbon</span></button>
+                                    <button onClick={() => setShowIjinModal(true)} className="bg-purple-600 text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform"><i data-lucide="clipboard-list" class="w-4 h-4"></i><span className="text-[7px] uppercase">Manajemen Ijin</span></button>
+                                    <button onClick={() => setShowKasbonModal(true)} className="bg-blue-600 text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform"><i data-lucide="wallet" class="w-4 h-4"></i><span className="text-[7px] uppercase">Input Kasbon</span></button>
+                                    <button onClick={() => setShowHolidayModal(true)} className="bg-red-500 text-white p-3 rounded-2xl font-bold flex flex-col items-center gap-1 shadow-lg active:scale-95 transition-transform"><i data-lucide="calendar" class="w-4 h-4"></i><span className="text-[7px] uppercase tracking-tighter text-center">Set Libur</span></button>
                                 </div>
                                 <div className="space-y-4 pt-4 border-t border-slate-100">
-                                    <div className="flex justify-between items-center px-1">
-                                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Monitoring Laporan</h4>
-                                        <select className="text-[10px] bg-slate-50 border border-slate-200 p-2 rounded-xl outline-none font-bold" value={selectedMonth} onChange={(e) => setSelectedMonth(parseInt(e.target.value))}>
-                                            {BULAN_INDO.map((b, i) => <option key={i} value={i}>{b}</option>)}
-                                        </select>
-                                    </div>
+                                    <div className="flex justify-between items-center px-1"><h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Pilih Periode :</h4><select className="text-[10px] bg-slate-50 border border-slate-200 p-2 rounded-xl outline-none font-bold" value={selectedMonth} onChange={(e) => setSelectedMonth(parseInt(e.target.value))}>{BULAN_INDO.map((b, i) => <option key={i} value={i}>{b}</option>)}</select></div>
                                     <div className="space-y-3">
                                         {karyawanList.map((k, i) => (
-                                            <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-blue-300 transition-colors">
-                                                <div className="flex items-center gap-3">
-                                                    <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center font-bold text-blue-600 uppercase italic">{k.nama.charAt(0)}</div>
-                                                    <div><h4 className="text-xs font-bold uppercase">{k.nama}</h4><p className="text-[9px] text-slate-400 uppercase tracking-tighter">{k.role}</p></div>
-                                                </div>
-                                                <button onClick={() => { setPayslipUser(k); setShowPayslip(true); }} className="bg-white text-blue-600 px-4 py-2 rounded-xl text-[10px] font-black shadow-sm border border-slate-100 uppercase italic">Kuitansi</button>
-                                            </div>
+                                            <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-blue-300 transition-colors"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center font-bold text-blue-600 uppercase italic">{k.nama.charAt(0)}</div><div><h4 className="text-xs font-bold uppercase">{k.nama}</h4><p className="text-[9px] text-slate-400 uppercase tracking-tighter">{k.role}</p></div></div><button onClick={() => { setPayslipUser(k); setShowPayslip(true); }} className="bg-white text-blue-600 px-4 py-2 rounded-xl text-[10px] font-black shadow-sm border border-slate-100 uppercase italic">Kuitansi</button></div>
                                         ))}
                                     </div>
                                 </div>
@@ -720,10 +624,7 @@
                             {history.slice(0, 10).map((item, idx) => (
                                 <div key={idx} className="bg-white p-5 rounded-[2rem] border border-slate-50 flex items-center gap-5 shadow-sm animate-in" style={{animationDelay: `${idx*0.05}s`}}>
                                     <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm ${item.tipe === 'IN' ? 'bg-emerald-50 text-emerald-600' : 'bg-orange-50 text-orange-600'}`}><i data-lucide={item.tipe === 'IN' ? 'clock' : 'log-out'} class="w-6 h-6"></i></div>
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex justify-between items-start mb-1"><h4 className="font-bold text-sm">{isAdmin ? item.nama : item.tanggal}</h4><span className={`text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-tighter shadow-sm ${item.telat > 0 ? 'bg-red-500 text-white' : 'bg-blue-600 text-white'}`}>{item.status}</span></div>
-                                        <p className="text-[11px] text-slate-500 font-bold uppercase italic">{formatTimeDisplay(item.waktu)} • {item.tipe === 'IN' ? 'Check In' : 'Check Out'}</p>
-                                    </div>
+                                    <div className="flex-1 min-w-0"><div className="flex justify-between items-start mb-1"><h4 className="font-bold text-sm">{isAdmin ? item.nama : item.tanggal}</h4><span className={`text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-tighter shadow-sm ${item.telat > 0 ? 'bg-red-500 text-white' : 'bg-blue-600 text-white'}`}>{item.status}</span></div><p className="text-[11px] text-slate-500 font-bold uppercase italic">{formatTimeDisplay(item.waktu)} • {item.tipe === 'IN' ? 'Check In' : 'Check Out'}</p></div>
                                     <a href={item.foto} target="_blank" className="w-14 h-14 rounded-2xl bg-slate-100 overflow-hidden shrink-0 border border-slate-100 shadow-sm"><img src={item.foto} className="w-full h-full object-cover" /></a>
                                 </div>
                             ))}
@@ -732,39 +633,12 @@
 
                     {/* KAMERA */}
                     {view === 'camera' && (
-                        <div className="fixed inset-0 z-[110] bg-black flex flex-col animate-in fade-in">
-                            <video ref={videoRef} autoPlay playsInline className="w-full flex-1 object-cover scale-x-[-1]" />
-                            <canvas ref={canvasRef} width="640" height="480" className="hidden" />
-                            <div className="absolute inset-x-0 bottom-0 p-10 bg-gradient-to-t from-black/80 to-transparent text-white space-y-8">
-                                <div className="flex gap-4 items-start bg-black/50 p-5 rounded-3xl backdrop-blur-xl border border-white/10 shadow-2xl">
-                                    <i data-lucide="map-pin" class="text-red-500 w-5 h-5 shrink-0 mt-1"></i>
-                                    <p className="text-[11px] leading-relaxed font-medium opacity-90">{location.address}</p>
-                                </div>
-                                <div className="flex justify-between items-center px-6">
-                                    <button onClick={() => { if(videoRef.current?.srcObject) videoRef.current.srcObject.getTracks().forEach(t=>t.stop()); setView('dashboard'); }} className="text-white font-bold bg-white/10 px-8 py-3 rounded-2xl backdrop-blur-md">Batal</button>
-                                    <button disabled={loading} onClick={() => { (attendanceType === 'OUT') ? setShowOTModal(true) : submitData(''); }} className="w-24 h-24 bg-white rounded-full p-1.5 shadow-[0_0_50px_rgba(255,255,255,0.4)] active:scale-95 transition-transform">
-                                        <div className="w-full h-full border-4 border-slate-100 rounded-full flex items-center justify-center">
-                                            {loading ? <div className="spinner !border-t-blue-600"></div> : <div className="w-16 h-16 bg-blue-600 rounded-full shadow-inner"></div>}
-                                        </div>
-                                    </button>
-                                    <div className="w-24" />
-                                </div>
-                            </div>
-                        </div>
+                        <div className="fixed inset-0 z-[110] bg-black flex flex-col animate-in fade-in"><video ref={videoRef} autoPlay playsInline className="w-full flex-1 object-cover scale-x-[-1]" /><canvas ref={canvasRef} width="640" height="480" className="hidden" /><div className="absolute inset-x-0 bottom-0 p-10 bg-gradient-to-t from-black/80 to-transparent text-white space-y-8"><div className="flex gap-4 items-start bg-black/50 p-5 rounded-3xl backdrop-blur-xl border border-white/10 shadow-2xl"><i data-lucide="map-pin" class="text-red-500 w-5 h-5 shrink-0 mt-1"></i><p className="text-[11px] leading-relaxed font-medium opacity-90">{location.address}</p></div><div className="flex justify-between items-center px-6"><button onClick={() => { if(videoRef.current?.srcObject) videoRef.current.srcObject.getTracks().forEach(t=>t.stop()); setView('dashboard'); }} className="text-white font-bold bg-white/10 px-8 py-3 rounded-2xl backdrop-blur-md">Batal</button><button disabled={loading} onClick={() => { (attendanceType === 'OUT') ? setShowOTModal(true) : submitData(''); }} className="w-24 h-24 bg-white rounded-full p-1.5 shadow-[0_0_50px_rgba(255,255,255,0.4)] active:scale-95 transition-transform"><div className="w-full h-full border-4 border-slate-100 rounded-full flex items-center justify-center">{loading ? <div className="spinner !border-t-blue-600"></div> : <div className="w-16 h-16 bg-blue-600 rounded-full shadow-inner"></div>}</div></button><div className="w-24" /></div></div></div>
                     )}
 
                     {/* MODAL OT */}
                     {showOTModal && (
-                        <div className="fixed inset-0 z-[115] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm text-slate-800">
-                            <div className="bg-white w-full rounded-[2.5rem] p-8 space-y-6 shadow-2xl animate-in">
-                                <div className="text-center uppercase font-bold tracking-widest">Tugas Lembur</div>
-                                <textarea className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl h-32 outline-none focus:ring-2 focus:ring-orange-500 text-sm" placeholder="Sebutkan tugas lembur Anda hari ini..." onChange={e => setOvertimeTask(e.target.value)} />
-                                <div className="flex gap-3">
-                                    <button onClick={() => setShowOTModal(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-400 uppercase text-xs">Batal</button>
-                                    <button onClick={() => submitData(overtimeTask)} className="flex-1 bg-orange-500 text-white py-4 rounded-2xl font-bold shadow-lg uppercase text-xs">Kirim</button>
-                                </div>
-                            </div>
-                        </div>
+                        <div className="fixed inset-0 z-[115] bg-black/70 flex items-center justify-center p-6 backdrop-blur-sm text-slate-800"><div className="bg-white w-full rounded-[2.5rem] p-8 space-y-6 shadow-2xl animate-in"><div className="text-center uppercase font-bold tracking-widest">Tugas Lembur</div><textarea className="w-full bg-slate-50 border border-slate-100 p-4 rounded-2xl h-32 outline-none focus:ring-2 focus:ring-orange-500 text-sm" placeholder="Sebutkan tugas lembur Anda hari ini..." onChange={e => setOvertimeTask(e.target.value)} /><div className="flex gap-3"><button onClick={() => setShowOTModal(false)} className="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-400 uppercase text-xs">Batal</button><button onClick={() => submitData(overtimeTask)} className="flex-1 bg-orange-500 text-white py-4 rounded-2xl font-bold shadow-lg uppercase text-xs">Kirim</button></div></div></div>
                     )}
                 </div>
             );
